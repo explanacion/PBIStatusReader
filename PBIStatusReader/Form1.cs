@@ -24,16 +24,22 @@ namespace PBIStatusReader
         PictureBox[,] pictureBoxes = new PictureBox[10,5];
         //static HttpWebRequest webRequest;
         static object locker = new object();
-        Label[,] dynamicparamls;
+        public Label[,] dynamicparamls;
 
         // здесь будем хранить последние считанные параметры для каждого! устройства в виде статусов
         int[,] lastcheckedparams = new int[10, 5];
+        public bool isSettingsForm; // форма настроек создана и активна
+
+        public string[] oldparams = new string[10]; // буферы для хранения задаваемых настроек
+        public string[] oldregexps = new string[10]; 
         
         public Form1()
         {
             ap = new settings(this); // инициализация настроек приложения
             InitializeComponent();
             bool ifread = ap.ReadSettings(); // считываем записанные ранее настройки
+            isSettingsForm = false;
+            timer1 = new System.Windows.Forms.Timer();
 
             if (!ifread)
             {
@@ -53,6 +59,14 @@ namespace PBIStatusReader
                 
             // рисуем форму
             DrawMainForm();
+        }
+
+        public void InitializeOldArray(int n, string[] oldstrs, string newstrs)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                oldstrs[i] = newstrs;
+            }
         }
 
         public void ClearAllMainControls()
@@ -116,7 +130,6 @@ namespace PBIStatusReader
                 dynamicparamls[0, j].Text = ap.ap.receiverecs[0].parameters[j];
                 this.Controls.Add(dynamicparamls[0, j]);
             }
-            timer1 = new System.Windows.Forms.Timer();
 
             int tempstep = 80;
 
@@ -295,7 +308,7 @@ namespace PBIStatusReader
                     Directory.CreateDirectory(curpath);
                 }
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string tofile = nw.ToString("dd-MM-yyyy") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
+                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
                 //string tofile = DateTime.Now.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
                 using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
                 {
@@ -333,7 +346,7 @@ namespace PBIStatusReader
                 if (!Directory.Exists(curpath))
                     Directory.CreateDirectory(curpath);
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string tofile = nw.ToString("dd-MM-yyyy") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
+                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
 
                 using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
                 {
@@ -353,7 +366,15 @@ namespace PBIStatusReader
         void getSelectedInput(int i)
         {
             HttpWebResponse resp = null;
-            HttpWebRequest webRequest = (HttpWebRequest)WebRequest.Create(ap.ap.receiverecs[i].url + "/cgi-bin/decoder_config.cgi");
+            HttpWebRequest webRequest;
+            try
+            {
+                webRequest = (HttpWebRequest)WebRequest.Create(ap.ap.receiverecs[i].urlinput);
+            }
+            catch (System.UriFormatException)
+            {
+                return;
+            }
             webRequest.Method = "GET";
             webRequest.Timeout = 5000; // 5 секунд таймаут
             webRequest.Headers.Clear();
@@ -385,7 +406,7 @@ namespace PBIStatusReader
                                 if (bolditem.IndexOf(ap.ap.receiverecs[i].parameters[j]) != -1)
                                 {
                                     keypos = j;
-                                    dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold);
+                                    dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
                                     break;
                                 }
                             }
@@ -413,8 +434,21 @@ namespace PBIStatusReader
                 int idn = (int)id;
                 makeregulardynamiclabels(idn);
                 HttpWebResponse resp = null;
+                HttpWebRequest webRequest;
                 //webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(idn) + "/cgi-bin/input_status.cgi?cur_time=" + secondsSinceEpoch.ToString());
-                HttpWebRequest webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(idn));
+                try
+                {
+                    webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(idn));
+                }
+                catch (System.UriFormatException)
+                {
+                    for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
+                    {
+                        setColorOfPictureBox(pictureBoxes[idn, j], 2);
+                    }
+                    WriteToConnectionLog(idn, "В настройках задан неверный адрес.");
+                    return;
+                }
                 webRequest.Method = "GET";
                 webRequest.Timeout = 5000; // 5 секунд таймаут
                 webRequest.Headers.Clear();
@@ -452,8 +486,8 @@ namespace PBIStatusReader
                             }
                             else
                             {
-                                setColorOfPictureBox(pictureBoxes[idn, j], 0);
-                                currentstate = 0;
+                                setColorOfPictureBox(pictureBoxes[idn, j], 2);
+                                currentstate = 2;
                             }
 
 
@@ -496,7 +530,11 @@ namespace PBIStatusReader
 
         private void настройкиToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            ap.CreateSettingsForm();
+            if (!isSettingsForm)
+            {
+                ap.CreateSettingsForm();
+                isSettingsForm = true;
+            }
         }
 
         private void label1_Click(object sender, EventArgs e)
@@ -531,6 +569,7 @@ namespace PBIStatusReader
     {
         public string name;
         public string url;
+        public string urlinput;
         public string login;
         public string pass;
         public List<string> parameters;
@@ -598,6 +637,7 @@ namespace PBIStatusReader
         NumericUpDown receivescnt;
         TextBox[] tnames;
         TextBox[] turls;
+        TextBox[] turlset;
         Label[] captions;
         NumericUpDown height;
         NumericUpDown width;
@@ -663,6 +703,7 @@ namespace PBIStatusReader
             rr.pass = "12345";
             rr.name = "36 ТНТ";
             rr.url = "http://192.168.4.231/cgi-bin/input_status.cgi";
+            rr.urlinput = "http://192.168.4.231/cgi-bin/decoder_config.cgi";
             rr.parameters[0] = "IP";
             rr.parameters[1] = "ASI1";
             rr.parameters[2] = "ASI2";
@@ -720,16 +761,12 @@ namespace PBIStatusReader
             okbtn.Click += (s, e) =>
             {
                 // save params to struct
-                ap.receiverecs[i].m = textboxparams.Lines.Length;
                 using (System.IO.StringReader reader = new System.IO.StringReader(textboxparams.Text))
                 {
-                    for (int j = 0; j < textboxparams.Lines.Length; j++)
-                    {
-                        if (type)
-                            ap.receiverecs[i].parameters[j] = reader.ReadLine();
-                        else
-                            ap.receiverecs[i].regexps[j] = reader.ReadLine();
-                    }
+                    if (type)
+                        formobj.oldparams[i] = reader.ReadToEnd();
+                    else
+                        formobj.oldregexps[i] = reader.ReadToEnd();
                 }
                 setparamsform.Close();
             };
@@ -745,21 +782,11 @@ namespace PBIStatusReader
             setparamsform.Controls.Add(cancelbtn);
             setparamsform.Show();
             // put current params to the form
-            for (int j = 0; j < ap.receiverecs[i].m; j++)
-            {
-                if (ap.receiverecs[i].parameters[j] != "")
-                {
-                    
-                    if (j > 0)
-                    {
-                        textboxparams.AppendText("\r\n");
-                    }
-                    if (type)
-                        textboxparams.AppendText(ap.receiverecs[i].parameters[j]);
-                    else
-                        textboxparams.AppendText(ap.receiverecs[i].regexps[j]);
-                }
-            }
+            textboxparams.Clear();
+            if (type)
+                textboxparams.AppendText(string.Join("\r\n", formobj.oldparams[i].Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries)));
+            else
+                textboxparams.AppendText(string.Join("\r\n", formobj.oldregexps[i].Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries)));
         }
 
         void param_Click(object sender, EventArgs e)
@@ -794,6 +821,7 @@ namespace PBIStatusReader
                 {
                     Array.Resize(ref tnames, newvalue);
                     Array.Resize(ref turls, newvalue);
+                    Array.Resize(ref turlset, newvalue);
                     Array.Resize(ref paramitems, newvalue);
                     Array.Resize(ref regexps, newvalue);
                     Array.Resize(ref logins, newvalue);
@@ -802,6 +830,8 @@ namespace PBIStatusReader
 
                     tnames[i] = new TextBox();
                     turls[i] = new TextBox();
+                    turlset[i] = new TextBox();
+                    turlset[i].Width = 170;
                     paramitems[i] = new Button();
                     regexps[i] = new Button();
                     logins[i] = new TextBox();
@@ -830,6 +860,8 @@ namespace PBIStatusReader
                     settingsform.Controls.Add(logins[i]);
                     passwords[i].Location = new Point(logins[i].Location.X + 100, logins[i].Location.Y);
                     settingsform.Controls.Add(passwords[i]);
+                    turlset[i].Location = new Point(passwords[i].Location.X + 100, passwords[i].Location.Y);
+                    settingsform.Controls.Add(turlset[i]);
                     captions[i].Text = String.Format("Имя {0} ресивера", i + 1);
 
                     // двигаем нижние контролы вниз, не выходя за границы
@@ -853,6 +885,9 @@ namespace PBIStatusReader
                     // даем полям значения по умолчанию
                     logins[i].Text = "root";
                     passwords[i].Text = "12345";
+
+                    formobj.oldparams[i] = string.Join("\r\n", ap.receiverecs[i].parameters.ToArray(), 0, ap.receiverecs[i].m);
+                    formobj.oldregexps[i] = string.Join("\r\n", ap.receiverecs[i].regexps.ToArray(), 0, ap.receiverecs[i].m);
                 }
             }
             else if (newvalue < oldvalue)
@@ -887,6 +922,10 @@ namespace PBIStatusReader
                     settingsform.Controls.Remove(passwords[i - 1]);
                     passwords[i - 1].Dispose();
 
+                    turlset[i - 1].Hide();
+                    settingsform.Controls.Remove(turlset[i - 1]);
+                    turlset[i - 1].Dispose();
+
                     captions[i - 1].Hide();
                     settingsform.Controls.Remove(captions[i - 1]);
                     captions[i - 1].Dispose();
@@ -895,10 +934,12 @@ namespace PBIStatusReader
 
                 Array.Resize(ref tnames, newvalue);
                 Array.Resize(ref turls, newvalue);
+                Array.Resize(ref turlset, newvalue);
                 Array.Resize(ref paramitems, newvalue);
                 Array.Resize(ref regexps, newvalue);
                 Array.Resize(ref logins, newvalue);
                 Array.Resize(ref passwords, newvalue);
+                Array.Resize(ref turlset, newvalue);
                 Array.Resize(ref captions, newvalue);
 
                 //{
@@ -913,6 +954,26 @@ namespace PBIStatusReader
                 tnestedpath.Location = new Point(tnestedpath.Location.X, logmaindir.Location.Y);
                 //}
             }
+        }
+
+        void label_DragEnter(object sender, DragEventArgs e)
+        {
+            int newX = e.X;
+            int newY = e.Y;
+            // formobj.GetChildAtPoint()
+            Control tempControl = formobj.GetChildAtPoint(Cursor.Position);
+            for (int j = 0; j < ap.m; j++)
+            {
+                if (tempControl == formobj.dynamicparamls[0, j])
+                {
+                    // swap controls
+                }
+            }
+
+        }
+
+        void label_DragDrop(object sender, DragEventArgs e)
+        {
         }
 
         // создание формы настроек
@@ -932,6 +993,16 @@ namespace PBIStatusReader
             logins = new TextBox[ap.n];
             // и паролей
             passwords = new TextBox[ap.n];
+            turlset = new TextBox[ap.n];
+
+            settingsform.Disposed += (s, e) =>
+                {
+                    formobj.isSettingsForm = false;
+                };
+
+            formobj.dynamicparamls[0, 0].AllowDrop = true;
+            formobj.dynamicparamls[0, 0].DragEnter += new DragEventHandler(label_DragEnter);
+            formobj.dynamicparamls[0, 0].DragDrop +=new DragEventHandler(label_DragDrop);
 
             receivescnt.Value = ap.n;
             receivescnt.Width = 40;
@@ -939,6 +1010,16 @@ namespace PBIStatusReader
             receivescnt.Maximum = 10;
             receivescnt.Location = new Point(130, 5);
 
+            for (int i = 0; i < ap.n; i++)
+            {
+                //MessageBox.Show(string.Join("\r\n", ap.receiverecs[i].parameters.ToArray(), 0, ap.receiverecs[i].m));
+                formobj.oldparams[i] = string.Join("\r\n", ap.receiverecs[i].parameters.ToArray(), 0, ap.receiverecs[i].m);
+
+                formobj.oldregexps[i] = string.Join("\r\n", ap.receiverecs[i].regexps.ToArray(), 0, ap.receiverecs[i].m);
+            }
+
+            //MessageBox.Show(formobj.oldparams[0].Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).Count().ToString());
+            //MessageBox.Show("Инициализация формы настроек прошла. Параметры в oldparams\n" + formobj.oldparams);
             for (int i = 0; i < ap.n; i++)
             {
                 tnames[i] = new TextBox();
@@ -954,6 +1035,7 @@ namespace PBIStatusReader
                 regexps[i].Name = i.ToString();
                 logins[i] = new TextBox();
                 passwords[i] = new TextBox();
+                turlset[i] = new TextBox();
                 // размещение элементов: с каждым индексом ордината ниже на фиксированный шаг
                 if (i == 0)
                 {
@@ -982,7 +1064,11 @@ namespace PBIStatusReader
                     settingsform.Controls.Add(logins[i]);
                     // поле ввода пароля
                     passwords[i].Location = new Point(logins[i].Location.X + 100, logins[i].Location.Y);
+                    // поле ввода адреса выбора входа
+                    turlset[i].Width = 170;
+                    turlset[i].Location = new Point(passwords[i].Location.X + 100, passwords[i].Location.Y);
                     settingsform.Controls.Add(passwords[i]);
+                    settingsform.Controls.Add(turlset[i]);
                 }
                 if (i > 0)
                 {
@@ -1012,6 +1098,9 @@ namespace PBIStatusReader
                     // поля ввода пароля
                     passwords[i].Location = new Point(logins[i].Location.X + 100, logins[i].Location.Y);
                     settingsform.Controls.Add(passwords[i]);
+                    turlset[i].Width = 170;
+                    turlset[i].Location = new Point(passwords[i].Location.X + 100, passwords[i].Location.Y);
+                    settingsform.Controls.Add(turlset[i]);
                 }
 
                 captions[i].Text = String.Format("Имя {0} ресивера", i + 1);
@@ -1072,13 +1161,19 @@ namespace PBIStatusReader
             captionpass.Location = new Point(captionlogin.Location.X + 100, captionlogin.Location.Y);
             settingsform.Controls.Add(captionpass);
 
+            Label turlsetcap = new Label(); // контролы для адреса страницы выбора текущего входа
+            turlsetcap.Text = "Адрес страницы выбора входа";
+            turlsetcap.Width = 180;
+            turlsetcap.Location = new Point(captionpass.Location.X + 110, captionpass.Location.Y);
+            settingsform.Controls.Add(turlsetcap);
+
             twritetofile = new CheckBox(); // чекбокс ведение журнала?
             inform = new Label(); // лейбл периодичность опроса ресивера
             tperiod = new NumericUpDown(); // периодичность
             tperiod.Maximum = 99999;
             settingsform.Text = "Program Settings";
             
-            settingsform.Size = new System.Drawing.Size(850, 600);
+            settingsform.Size = new System.Drawing.Size(990, 600);
             
             okbutton = new Button();
             okbutton.Text = "OK";
@@ -1090,7 +1185,19 @@ namespace PBIStatusReader
             cancelbutton.Text = "Отмена";
             cancelbutton.Click += (s, e) =>
                 {
-                    settingsform.Close();
+                    // нажата кнопка отмены
+                    settingsform.Close(); // форма закрывается
+                    formobj.isSettingsForm = false; // флаг помечается
+                    // старые настройки снова считываются из файла
+                    ReadSettings();
+                    for (int i = 0; i < ap.n; i++)
+                    {
+                        ap.receiverecs[i].parameters.RemoveAll(item => item == null); // при десериализации в поле параметров появляются лишние null, этот код их убирает
+                        ap.receiverecs[i].regexps.RemoveAll(item => item == null);
+                    }
+          
+                    // таймер запускается снова
+                    formobj.timer1.Start();
                 };
             cancelbutton.Location = new Point(okbutton.Location.X + 80, okbutton.Location.Y);
             settingsform.Controls.Add(cancelbutton);
@@ -1180,6 +1287,7 @@ namespace PBIStatusReader
                 // params and regexps we should set in buttons handlers
                 logins[i].Text = ap.receiverecs[i].login;
                 passwords[i].Text = ap.receiverecs[i].pass;
+                turlset[i].Text = ap.receiverecs[i].urlinput;
             }
             logmaindir.Text = ap.mainlogpath;
             tnestedpath.Checked = ap.nestedpath;
@@ -1196,6 +1304,7 @@ namespace PBIStatusReader
                 ap.receiverecs[i].url = turls[i].Text;
                 ap.receiverecs[i].login = logins[i].Text;
                 ap.receiverecs[i].pass = passwords[i].Text;
+                ap.receiverecs[i].urlinput = turlset[i].Text;
             }
             ap.writetofile = twritetofile.Checked;
             ap.period = Convert.ToUInt32(tperiod.Value);
@@ -1232,6 +1341,28 @@ namespace PBIStatusReader
                     return;
                 }
             }
+
+            // применяем настройки параметров и шаблонов к структуре
+            for (int i = 0; i < ap.n; i++)
+            {
+                // проверка количества строк параметров и шаблонов на совпадение
+                int n1 = formobj.oldparams[i].Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).Count();
+                int n2 = formobj.oldregexps[i].Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).Count();
+                if (n1 != n2)
+                {
+                    MessageBox.Show("Внимание! Количество строк-параметров не совпадает с количеством строк-шаблонов. Они должны соответстовать друг другу.");
+                    return;
+                }
+                ap.receiverecs[i].m = n1;
+                for (int j = 0; j < ap.receiverecs[i].m; j++)
+                {
+                    //MessageBox.Show(formobj.oldparams[i].Split(new[] { "\r\n" }, StringSplitOptions.None)[j]);
+                    ap.receiverecs[i].parameters[j] = formobj.oldparams[i].Split(new[] { "\r\n" }, StringSplitOptions.None)[j];
+                    ap.receiverecs[i].regexps[j] = formobj.oldregexps[i].Split(new[] { "\r\n" }, StringSplitOptions.None)[j];
+                }
+            }
+
+            formobj.isSettingsForm = false; // форма настроек закрыта
             ap.n = tempn;
 
             ApplySettingsToStruct();
