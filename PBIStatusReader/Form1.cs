@@ -20,14 +20,14 @@ namespace PBIStatusReader
         int n = 10; // число ресиверов
         settings ap;
         public System.Windows.Forms.Timer timer1;
+        public bool checknewday; // писать в лог в 00:00
+        public bool written; // для однократности записи
         Label[] recvnamelabels;
         PictureBox[,] pictureBoxes = new PictureBox[10,5];
         //static HttpWebRequest webRequest;
         static object locker = new object();
         public Label[,] dynamicparamls;
 
-        // здесь будем хранить последние считанные параметры для каждого! устройства в виде статусов
-        int[,] lastcheckedparams = new int[10, 5];
         public bool isSettingsForm; // форма настроек создана и активна
 
         public string[] oldparams = new string[10]; // буферы для хранения задаваемых настроек
@@ -39,6 +39,8 @@ namespace PBIStatusReader
             InitializeComponent();
             bool ifread = ap.ReadSettings(); // считываем записанные ранее настройки
             isSettingsForm = false;
+            checknewday = false;
+            written = false;
             timer1 = new System.Windows.Forms.Timer();
 
             if (!ifread)
@@ -225,17 +227,6 @@ namespace PBIStatusReader
         private void Form1_Load(object sender, EventArgs e)
         {
             System.Windows.Forms.Control.CheckForIllegalCrossThreadCalls = false;
-
-            // последние сохраненные параметры
-            for (int i = 0; i < ap.ap.n; i++)
-            {
-                for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
-                {
-                    lastcheckedparams[i, j] = new int();
-                    lastcheckedparams[i, j] = 4;
-                }
-            }
-
         }
 
         private string geturlbyid(int id)
@@ -346,12 +337,12 @@ namespace PBIStatusReader
                 if (!Directory.Exists(curpath))
                     Directory.CreateDirectory(curpath);
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
+                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + message;
 
                 using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
                 {
                     str.WriteLine(tofile);
-                }              
+                }
             }
             catch (System.IO.IOException e)
             {
@@ -406,6 +397,13 @@ namespace PBIStatusReader
                                 if (bolditem.IndexOf(ap.ap.receiverecs[i].parameters[j]) != -1)
                                 {
                                     keypos = j;
+                                    if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
+                                    {
+                                            // изменился
+                                            string tolog = ap.ap.receiverecs[i].parameters[j] + "\tSET\t" + ap.ap.receiverecs[i].urlinput;
+                                            WriteToLog(i, tolog);
+                                    }
+                                    ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
                                     dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
                                     break;
                                 }
@@ -446,7 +444,14 @@ namespace PBIStatusReader
                     {
                         setColorOfPictureBox(pictureBoxes[idn, j], 2);
                     }
-                    WriteToConnectionLog(idn, "В настройках задан неверный адрес.");
+
+                    string tmplogmsg = "В настройках задан неверный адрес.";
+                    if (ap.ap.receiverecs[idn].lastlogmsg[0] != tmplogmsg)
+                    {
+                        ap.ap.receiverecs[idn].lastlogmsg[0] = tmplogmsg;
+                        ap.ap.receiverecs[idn].laststatus[0] = 2;
+                        WriteToConnectionLog(idn, tmplogmsg);
+                    }
                     return;
                 }
                 webRequest.Method = "GET";
@@ -486,23 +491,44 @@ namespace PBIStatusReader
                             }
                             else
                             {
-                                setColorOfPictureBox(pictureBoxes[idn, j], 2);
-                                currentstate = 2;
+                                setColorOfPictureBox(pictureBoxes[idn, j], 0);
+                                currentstate = 0;
                             }
-
 
                             if (ap.ap.writetofile == true)
                             {
-                                // если состояние хоть одного параметра изменилось - пишем
-                                if (lastcheckedparams[idn,j] != currentstate) {
-                                    if (lastcheckedparams[idn,j] != 4)
-                                    {
-                                        WriteToLog(idn, ap.ap.receiverecs[idn].parameters[j] + "\t" + intToStatus(currentstate));
-                                    }
+                                // если полночь
+                                if (DateTime.Now.Hour == 0 && DateTime.Now.Minute == 0)
+                                {
+                                    if (!written) // если еще не записывали
+                                        checknewday = true; // устанавливаем флаг разрешения записи
                                 }
+                                else
+                                {
+                                    checknewday = false; // начался новый день, флаг разрешения записи сброшен
+                                    written = false; // снова как будто не писали, ждём следующей полночи
+                                }
+
+                                //MessageBox.Show(ap.ap.receiverecs[idn].laststatus[j].ToString() + " " + currentstate.ToString());
+                                // убрано - если это не первое считывание
+                                //if (ap.ap.receiverecs[idn].laststatus[j] != 4) {
+                                    // если состояние хоть одного параметра изменилось - пишем, если полуночный флаг - тоже пишем
+                                if (ap.ap.receiverecs[idn].laststatus[j] != currentstate || checknewday == true)
+                                    {
+                                        string tmpmsg = ap.ap.receiverecs[idn].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[idn].url;
+                                        // 0 1
+                                        written = true; // отмечаем что записали
+                                        checknewday = false; // сбрасываем флаг разрешения записи
+                                        Thread.Sleep(100);
+                                        WriteToLog(idn, tmpmsg);
+                                        ap.ap.receiverecs[idn].lastlogmsg[j] = tmpmsg;
+                                    }
+                                //}
                                 
                             }
-                            lastcheckedparams[idn, j] = currentstate;
+
+                            ap.ap.receiverecs[idn].laststatus[j] = currentstate;
+                            
                         }
                     }
                 }
@@ -512,18 +538,28 @@ namespace PBIStatusReader
                         return;
                     //MessageBox.Show(e.ToString());
                     Label tmp = getlabelbyid(idn);
-                    //Changelab(tmp, "Not connected");
-                    //MessageBox.Show(e.Message);
-             
-                    // прошлое значение не было связано с проблемами подключения
-                    if (lastcheckedparams[idn, 0] != 2)
+
+                    // увеличиваем счетчик неудачных подключений
+                    ap.ap.receiverecs[idn].counter = (ap.ap.receiverecs[idn].counter + 1) % ap.ap.logconnectlimit; // счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
+                    // если исключение появляется уже в (ap.ap.logconnectlimit - 1) раз
+                    if (ap.ap.receiverecs[idn].counter == ap.ap.logconnectlimit - 1)
                     {
-                        for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
+
+                        // прошлое значение не было связано с проблемами подключения
+                        if (ap.ap.receiverecs[idn].laststatus[0] != 2)
                         {
-                            lastcheckedparams[idn, j] = 2;
-                            setColorOfPictureBox(pictureBoxes[idn, j], 2);
+                            for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
+                            {
+                                // задаем статус ответа
+                                ap.ap.receiverecs[idn].laststatus[j] = 2;
+                                // подсветить все лампочки желтым
+                                setColorOfPictureBox(pictureBoxes[idn, j], 2);
+                            }
+
+                            // пишем в лог только если предыдущее сообщение отличается от текущего (не пишем повторы)
+                            if (ap.ap.receiverecs[idn].lastlogmsg[0] != e.Message)
+                                WriteToConnectionLog(idn, "CONNECT" + "\t" + e.Message);
                         }
-                        WriteToConnectionLog(idn, "CONNECT" + "\t" + e.Message);
                     }
                 }
         }
@@ -572,6 +608,13 @@ namespace PBIStatusReader
         public string urlinput;
         public string login;
         public string pass;
+
+        public List<int> laststatus; // значение последних считанных параметров (статусы), по 1 на параметр
+        public List<string> lastlogmsg; // последние записанные в лог сообщения, по 1 на параметр
+        [XmlIgnore]
+        public string lastactiveinput; // предыдущий активный вход
+        public int counter; // счетчик перебоев с соединением
+
         public List<string> parameters;
         public List<string> regexps;
         public int m;
@@ -579,15 +622,31 @@ namespace PBIStatusReader
         public ReceiverRecord()
         {
             m = 5;
+            counter = 0;
             parameters = new List<string>(new string[m]);
             regexps = new List<string>(new string[m]);
+            laststatus = new List<int>(new int[m]);
+            lastactiveinput = ""; // предыдущий активный вход
+            for (int j = 0; j < m; j++)
+            {
+                laststatus[j] = 4;
+            }
+            lastlogmsg = new List<string>(new string[m]);
         }
 
         public ReceiverRecord(int inm)
         {
             m = inm;
+            counter = 0;
             parameters = new List<string>(new string[m]);
             regexps = new List<string>(new string[m]);
+            laststatus = new List<int>(new int[m]);
+            lastactiveinput = ""; // предыдущий активный вход
+            for (int j = 0; j < m; j++)
+            {
+                laststatus[j] = 4;
+            }
+            lastlogmsg = new List<string>(new string[m]);
         }
 
         public void Resize(int newm)
@@ -598,6 +657,8 @@ namespace PBIStatusReader
             {
                 parameters.RemoveRange(newm, countr - newm);
                 regexps.RemoveRange(newm, countr - newm);
+                laststatus.RemoveRange(newm, countr - newm);
+                lastlogmsg.RemoveRange(newm, countr - newm);
             }
             else if (newm > countr)
             {
@@ -605,6 +666,8 @@ namespace PBIStatusReader
                 {
                     parameters.AddRange(new List<string>(new string[newm - countr]));
                     regexps.AddRange(new List<string>(new string[newm - countr]));
+                    laststatus.AddRange(new List<int>(new int[newm - countr]));
+                    lastlogmsg.AddRange(new List<string>(new string[newm - countr]));
                 }
             }
         }
@@ -626,7 +689,7 @@ namespace PBIStatusReader
             public string mainlogpath;
             public bool nestedpath;
             public List<ReceiverRecord> receiverecs = new List<ReceiverRecord>();
-
+            public int logconnectlimit; // число неудачных попыток подключения перед записью в лог
         }
         public setstruct ap;
         public XmlSerializer x;
@@ -689,6 +752,7 @@ namespace PBIStatusReader
             ap.n = 1;
             ap.m = 5;
             ap.period = 10;
+            ap.logconnectlimit = 3;
             ap.writetofile = true;
             ap.contype = true;
             ap.nestedpath = true;
@@ -709,7 +773,11 @@ namespace PBIStatusReader
             rr.parameters[2] = "ASI2";
             rr.parameters[3] = "Tuner";
             rr.parameters[4] = "CI";
-
+            rr.laststatus[0] = 4;
+            rr.laststatus[1] = 4;
+            rr.laststatus[2] = 4;
+            rr.laststatus[3] = 4;
+            rr.laststatus[4] = 4;
             rr.regexps[0] = "<ip value=\"\\d\">\\W+<lock value=\"(\\d+?)\">";
             rr.regexps[1] = "<asi1 value=\"\\d\">\\W+<lock value=\"(\\d+?)\">";
             rr.regexps[2] = "<asi2 value=\"\\d\">\\W+<lock value=\"(\\d+?)\">";
