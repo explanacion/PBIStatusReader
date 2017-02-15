@@ -12,6 +12,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 
 namespace PBIStatusReader
 {
@@ -20,8 +21,9 @@ namespace PBIStatusReader
         int n = 10; // число ресиверов
         settings ap;
         public System.Windows.Forms.Timer timer1;
-        public bool checknewday; // писать в лог в 00:00
-        public bool written; // для однократности записи
+        public System.Timers.Timer timermidnight;
+        public bool writing; // флаг-индикатор записи
+        public bool writingset; // флаг-индикатор записи смены входа
         Label[] recvnamelabels;
         PictureBox[,] pictureBoxes = new PictureBox[10,5];
         //static HttpWebRequest webRequest;
@@ -39,9 +41,11 @@ namespace PBIStatusReader
             InitializeComponent();
             bool ifread = ap.ReadSettings(); // считываем записанные ранее настройки
             isSettingsForm = false;
-            checknewday = false;
-            written = false;
+            writing = false;
+            writingset = false;
             timer1 = new System.Windows.Forms.Timer();
+            timermidnight = new System.Timers.Timer();
+            SetTimerMidnight();
 
             if (!ifread)
             {
@@ -61,6 +65,39 @@ namespace PBIStatusReader
                 
             // рисуем форму
             DrawMainForm();
+        }
+
+        public void MidNightScan()
+        {
+            timer1.Stop();
+            writing = true;
+            writingset = true;
+            List<Task> tasklist = new List<Task>();
+            for (int i = 0; i < ap.ap.n; i++)
+            {
+                int tempI = i;
+                tasklist.Add(Task.Factory.StartNew(() => setValues(tempI)));
+            }
+            Task.WaitAll(tasklist.ToArray());
+            writing = false;
+            timer1.Start();
+        }
+
+        public void SetTimerMidnight()
+        {
+            DateTime nowTime = DateTime.Now;
+            DateTime time = new DateTime(nowTime.Year, nowTime.Month, nowTime.Day, 0, 0, 0, 0);
+            if (nowTime > time)
+                time = time.AddDays(1);
+            var span = time - DateTime.Now;
+            timermidnight.Interval = span.TotalMilliseconds;
+            timermidnight.AutoReset = false;
+            
+            timermidnight.Elapsed += (sender, args) => {
+                MidNightScan();
+                SetTimerMidnight();
+            };
+            timermidnight.Start();
         }
 
         public void InitializeOldArray(int n, string[] oldstrs, string newstrs)
@@ -162,7 +199,7 @@ namespace PBIStatusReader
                     pictureBoxes[i, j].SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
                     if (ap.ap.receiverecs[i].parameters[j] != "")
                         this.Controls.Add(pictureBoxes[i, j]);
-                    setColorOfPictureBox(pictureBoxes[i, j], 0);
+                    setColorOfPictureBox(pictureBoxes[i, j], 2);
 
                     if (i > 0)
                     {
@@ -202,25 +239,32 @@ namespace PBIStatusReader
 
         }
 
-        void timer1_Tick(object sender, EventArgs e)
+        // получение данных со всех устройств
+        void globalScan()
         {
-            timer1.Stop();
-            Thread[] sets = new Thread[10];
-
             for (int i = 0; i < ap.ap.n; i++)
             {
                 // проверяем, готова ли настройка этого ресивера
                 if (i < recvnamelabels.Count(s => s != null))
                 {
+                    //MessageBox.Show("timer1_Tick " + i.ToString());
                     if (recvnamelabels[i].Visible && recvnamelabels[i].Text != "")
                     {
-                        sets[i] = new Thread(setValues);
-                        sets[i].Start(i);
-                        //sets[i].Join(7000);
+                        int tempI = i;
+                        Task.Factory.StartNew(() => setValues(tempI));
+                        //sets[i] = new Thread(setValues);
+                        //sets[i].Name = i.ToString();
+                        //sets[i].Start(i);
+                        //sets[i].Join();
                     }
                 }
             }
+        }
 
+        void timer1_Tick(object sender, EventArgs e)
+        {
+            timer1.Stop();
+            globalScan();
             timer1.Start();
         }
 
@@ -299,7 +343,7 @@ namespace PBIStatusReader
                     Directory.CreateDirectory(curpath);
                 }
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
+                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\tCONNECT\tMESSAGE\t" + ap.ap.receiverecs[i].url + "\t" + message;
                 //string tofile = DateTime.Now.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
                 using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
                 {
@@ -397,11 +441,13 @@ namespace PBIStatusReader
                                 if (bolditem.IndexOf(ap.ap.receiverecs[i].parameters[j]) != -1)
                                 {
                                     keypos = j;
-                                    if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
+                                    if ((ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j]) || (writingset))
                                     {
                                             // изменился
                                             string tolog = ap.ap.receiverecs[i].parameters[j] + "\tSET\t" + ap.ap.receiverecs[i].urlinput;
                                             WriteToLog(i, tolog);
+                                            if (writingset)
+                                                writingset = false;
                                     }
                                     ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
                                     dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
@@ -454,6 +500,7 @@ namespace PBIStatusReader
                     }
                     return;
                 }
+                
                 webRequest.Method = "GET";
                 webRequest.Timeout = 5000; // 5 секунд таймаут
                 webRequest.Headers.Clear();
@@ -465,7 +512,24 @@ namespace PBIStatusReader
                 try
                 {
                     resp = (HttpWebResponse)webRequest.GetResponse();
-                    if (HttpStatusCode.OK == resp.StatusCode)
+                    if (HttpStatusCode.NotFound == resp.StatusCode)
+                    {
+                        // not found
+                        for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
+                        {
+                            setColorOfPictureBox(pictureBoxes[idn, j], 2);
+                        }
+
+                        string tmplogmsg = "Адрес страницы не найден";
+                        if (ap.ap.receiverecs[idn].lastlogmsg[0] != tmplogmsg)
+                        {
+                            ap.ap.receiverecs[idn].lastlogmsg[0] = tmplogmsg;
+                            ap.ap.receiverecs[idn].laststatus[0] = 2;
+                            WriteToConnectionLog(idn, tmplogmsg);
+                        }
+                        return;
+                    }
+                    else if (HttpStatusCode.OK == resp.StatusCode)
                     {
                         //Console.Write("Connection... OK");
                         Changelab(getlabelbyid(idn), ap.ap.receiverecs[idn].name);
@@ -474,19 +538,36 @@ namespace PBIStatusReader
                         StreamReader readStream = new StreamReader(ReceiveStream, encode);
                         String str = "";
                         str = readStream.ReadToEnd();
+                        // если страница пустая, но коннект состоялся, лампочки будут жёлтыми
+                        if (str.Length == 0)
+                        {
+                            for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
+                            {
+                                setColorOfPictureBox(pictureBoxes[idn, j], 2);
+                            }
+                            string tmplogmsg = "Пустая страница. Возможно, произошло зависание устройства.";
+                            if (ap.ap.receiverecs[idn].lastlogmsg[0] != tmplogmsg)
+                            {
+                                ap.ap.receiverecs[idn].lastlogmsg[0] = tmplogmsg;
+                                ap.ap.receiverecs[idn].laststatus[0] = 2;
+                                WriteToConnectionLog(idn, tmplogmsg);
+                            }
+                            Task.Factory.StartNew(() => getSelectedInput(idn));
+                            return;
+                        }
                         //Console.WriteLine(String.Format("Response: {0}", str));
                         Task.Factory.StartNew(() => getSelectedInput(idn));
                         for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
                         {
+                            Console.WriteLine(j.ToString());
                             string pattern = ap.ap.receiverecs[idn].regexps[j].ToString();
                             Regex newReg = new Regex(pattern);
                             Match matches = newReg.Match(str);
                             int currentstate = 0;
-
                             if (matches.Groups[1].Value == "1")  // if (matches.Groups[1].Success)
                             {
                                 //Console.WriteLine(matches.Groups[1].Value);
-                                setColorOfPictureBox(pictureBoxes[idn,j],1);
+                                setColorOfPictureBox(pictureBoxes[idn, j], 1);
                                 currentstate = 1;
                             }
                             else
@@ -497,46 +578,45 @@ namespace PBIStatusReader
 
                             if (ap.ap.writetofile == true)
                             {
-                                // если полночь
-                                if (DateTime.Now.Hour == 0 && DateTime.Now.Minute == 0)
+                                // если полночь и данные уже записываются                             
+                                // блок для безусловной записи в определенное время
+                                if (writing == true)
                                 {
-                                    if (!written) // если еще не записывали
-                                        checknewday = true; // устанавливаем флаг разрешения записи
+                                    Console.WriteLine("write parameter " + j.ToString() + " " + ap.ap.receiverecs[idn].parameters[j]);
+                                    string tmpmsg = ap.ap.receiverecs[idn].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[idn].url;
+                                    Thread.Sleep(100);
+                                    WriteToLog(idn, tmpmsg);
+                                    ap.ap.receiverecs[idn].lastlogmsg[j] = tmpmsg;
+                                    ap.ap.receiverecs[idn].laststatus[j] = currentstate;
+                                    if (ap.ap.receiverecs[idn].m == j)
+                                        return;
+                                    continue;
                                 }
+                                // блок для обычной записи
                                 else
                                 {
-                                    checknewday = false; // начался новый день, флаг разрешения записи сброшен
-                                    written = false; // снова как будто не писали, ждём следующей полночи
-                                }
-
-                                //MessageBox.Show(ap.ap.receiverecs[idn].laststatus[j].ToString() + " " + currentstate.ToString());
-                                // убрано - если это не первое считывание
-                                //if (ap.ap.receiverecs[idn].laststatus[j] != 4) {
-                                    // если состояние хоть одного параметра изменилось - пишем, если полуночный флаг - тоже пишем
-                                if (ap.ap.receiverecs[idn].laststatus[j] != currentstate || checknewday == true)
+                                    // если состояние хоть одного параметра изменилось - пишем
+                                    if (ap.ap.receiverecs[idn].laststatus[j] != currentstate)
                                     {
                                         string tmpmsg = ap.ap.receiverecs[idn].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[idn].url;
-                                        // 0 1
-                                        written = true; // отмечаем что записали
-                                        checknewday = false; // сбрасываем флаг разрешения записи
                                         Thread.Sleep(100);
                                         WriteToLog(idn, tmpmsg);
                                         ap.ap.receiverecs[idn].lastlogmsg[j] = tmpmsg;
                                     }
-                                //}
-                                
+                                }
                             }
-
                             ap.ap.receiverecs[idn].laststatus[j] = currentstate;
-                            
                         }
                     }
+                }
+                catch (System.ArgumentOutOfRangeException e)
+                {
+                    MessageBox.Show("new exception: " + e.Message);
                 }
                 catch (Exception e)
                 {
                     if (!ap.ap.writetofile)
                         return;
-                    //MessageBox.Show(e.ToString());
                     Label tmp = getlabelbyid(idn);
 
                     // увеличиваем счетчик неудачных подключений
@@ -558,7 +638,12 @@ namespace PBIStatusReader
 
                             // пишем в лог только если предыдущее сообщение отличается от текущего (не пишем повторы)
                             if (ap.ap.receiverecs[idn].lastlogmsg[0] != e.Message)
-                                WriteToConnectionLog(idn, "CONNECT" + "\t" + e.Message);
+                            {
+                                var st = new StackTrace(e, true);
+                                var frame = st.GetFrame(0);
+                                var line = frame.GetFileLineNumber();
+                                WriteToConnectionLog(idn, e.Message + " " + line.ToString());
+                            }
                         }
                     }
                 }
@@ -586,21 +671,6 @@ namespace PBIStatusReader
         }
     }
 
-//    1) добавить параметры в настройку:
-
-//задать считываемые параметры для каждого тюнера (эдитбокс через запятую), 
-//вынести регулярное выражение в настройку, но сделать его по умолчанию неактивным, чекбокс настроить
-//пользователь - пароль
-//тип соединения - http, snmp
-
-//2) журнал-лог сделать в формате
-//Дата<TAB>Время<TAB>IP<TAB>Tuner<TAB>Off 
-//Дата<TAB>Время<TAB>IP<TAB>ASI-1<TAB>On 
-//Дата<TAB>Время<TAB>IP<TAB>ASI-2<TAB>Off 
-//Дата<TAB>Время<TAB>IP<TAB>CI<TAB>Off 
-//Дата<TAB>Время<TAB>IP<TAB>IP<TAB>Off 
-
-//3) 
     public class ReceiverRecord
     {
         public string name;
@@ -609,7 +679,9 @@ namespace PBIStatusReader
         public string login;
         public string pass;
 
+        [XmlIgnore]
         public List<int> laststatus; // значение последних считанных параметров (статусы), по 1 на параметр
+        [XmlIgnore]
         public List<string> lastlogmsg; // последние записанные в лог сообщения, по 1 на параметр
         [XmlIgnore]
         public string lastactiveinput; // предыдущий активный вход
@@ -953,6 +1025,10 @@ namespace PBIStatusReader
                     // даем полям значения по умолчанию
                     logins[i].Text = "root";
                     passwords[i].Text = "12345";
+                    // адрес копируем из предыдущего поля
+                    turls[i].Text = turls[i - 1].Text;
+                    turlset[i].Text = turlset[i - 1].Text;
+
 
                     formobj.oldparams[i] = string.Join("\r\n", ap.receiverecs[i].parameters.ToArray(), 0, ap.receiverecs[i].m);
                     formobj.oldregexps[i] = string.Join("\r\n", ap.receiverecs[i].regexps.ToArray(), 0, ap.receiverecs[i].m);
@@ -1238,6 +1314,7 @@ namespace PBIStatusReader
             twritetofile = new CheckBox(); // чекбокс ведение журнала?
             inform = new Label(); // лейбл периодичность опроса ресивера
             tperiod = new NumericUpDown(); // периодичность
+            tperiod.Minimum = 1;
             tperiod.Maximum = 99999;
             settingsform.Text = "Program Settings";
             
@@ -1336,6 +1413,9 @@ namespace PBIStatusReader
                 ap = (setstruct)x.Deserialize(reader);
                 reader.Close();
                 reader.Dispose();
+                // ap.logconnectlimit can't be 0
+                if (ap.logconnectlimit == 0)
+                    ap.logconnectlimit = 1;
                 return true;
             }
             catch (Exception e)
@@ -1439,7 +1519,6 @@ namespace PBIStatusReader
 
             // timer 
             formobj.timer1.Interval = 1000*(int)ap.period;
-            formobj.timer1.Start();
 
             formobj.RedrawForm();
         }
