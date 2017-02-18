@@ -27,13 +27,16 @@ namespace PBIStatusReader
         Label[] recvnamelabels;
         PictureBox[,] pictureBoxes = new PictureBox[10,5];
         //static HttpWebRequest webRequest;
-        static object locker = new object();
         public Label[,] dynamicparamls;
 
         public bool isSettingsForm; // форма настроек создана и активна
 
         public string[] oldparams = new string[10]; // буферы для хранения задаваемых настроек
         public string[] oldregexps = new string[10]; 
+		
+		// мьютекс для файлов
+		static ReaderWriterLock locker = new ReaderWriterLock();
+		static ReaderWriterLock conlocker = new ReaderWriterLock();
         
         public Form1()
         {
@@ -72,14 +75,8 @@ namespace PBIStatusReader
             timer1.Stop();
             writing = true;
             writingset = true;
-            List<Task> tasklist = new List<Task>();
-            for (int i = 0; i < ap.ap.n; i++)
-            {
-                int tempI = i;
-                tasklist.Add(Task.Factory.StartNew(() => setValues(tempI)));
-            }
-            Task.WaitAll(tasklist.ToArray());
-            writing = false;
+            Task.Factory.StartNew(() => setValues(true));
+
             timer1.Start();
         }
 
@@ -242,23 +239,7 @@ namespace PBIStatusReader
         // получение данных со всех устройств
         void globalScan()
         {
-            for (int i = 0; i < ap.ap.n; i++)
-            {
-                // проверяем, готова ли настройка этого ресивера
-                if (i < recvnamelabels.Count(s => s != null))
-                {
-                    //MessageBox.Show("timer1_Tick " + i.ToString());
-                    if (recvnamelabels[i].Visible && recvnamelabels[i].Text != "")
-                    {
-                        int tempI = i;
-                        Task.Factory.StartNew(() => setValues(tempI));
-                        //sets[i] = new Thread(setValues);
-                        //sets[i].Name = i.ToString();
-                        //sets[i].Start(i);
-                        //sets[i].Join();
-                    }
-                }
-            }
+			Task.Factory.StartNew(() => setValues(false));
         }
 
         void timer1_Tick(object sender, EventArgs e)
@@ -342,6 +323,8 @@ namespace PBIStatusReader
                 {
                     Directory.CreateDirectory(curpath);
                 }
+				// thread safety
+				conlocker.AcquireWriterLock(int.MaxValue);
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
                 string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\tCONNECT\tMESSAGE\t" + ap.ap.receiverecs[i].url + "\t" + message;
                 //string tofile = DateTime.Now.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
@@ -358,7 +341,10 @@ namespace PBIStatusReader
             {
                 MessageBox.Show(e.Message);
             }
-
+			finally
+			{
+				conlocker.ReleaseWriterLock();
+			}
         }
         
         // процедура записи лога
@@ -366,6 +352,7 @@ namespace PBIStatusReader
         {
             if (!ap.ap.writetofile)
                 return;
+			
             // формируем путь
             string curpath = ap.ap.mainlogpath;
             DateTime nw = DateTime.Now;
@@ -380,6 +367,8 @@ namespace PBIStatusReader
             {
                 if (!Directory.Exists(curpath))
                     Directory.CreateDirectory(curpath);
+				// thread safety
+				locker.AcquireWriterLock(int.MaxValue);
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
                 string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + message;
 
@@ -396,6 +385,10 @@ namespace PBIStatusReader
             {
                 MessageBox.Show(e.Message);
             }
+			finally
+			{
+				locker.ReleaseWriterLock();
+			}
         }
 
         void getSelectedInput(int i)
@@ -461,192 +454,192 @@ namespace PBIStatusReader
             catch {
             }
         }
-
-        void makeregulardynamiclabels(int i)
+		
+		// перед новым циклом считывания убрать подчеркнутый шрифт у всех входов
+        void makeregulardynamiclabels()
         {
-            for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
-            {
-                dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Regular);
-            }
+			for (int i = 0; i < ap.ap.n; i++) {
+				for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+				{
+					dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Regular);
+				}
+			}
         }
+		
+		void MakeAllLightsYellow(int i)
+		{
+			for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+			{
+				setColorOfPictureBox(pictureBoxes[i, j], 2);
+			}
+		}
+		
+		void setValue(int i, bool writing)
+		{
+			TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
+			int secondsSinceEpoch = (int)t.TotalSeconds;
+			HttpWebResponse resp = null;
+			HttpWebRequest webRequest;
+			//webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(i) + "/cgi-bin/input_status.cgi?cur_time=" + secondsSinceEpoch.ToString());
+			try
+			{
+				webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(i));
+			}
+			catch (System.UriFormatException)
+			{
+				MakeAllLightsYellow(i);
+				string tmplogmsg = "В настройках задан неверный адрес.";
+				if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
+				{
+					ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
+					ap.ap.receiverecs[i].laststatus[0] = 2;
+					WriteToConnectionLog(i, tmplogmsg);
+				}
+				return;
+			}
+			webRequest.Method = "GET";
+			webRequest.Timeout = 5000; // 5 секунд таймаут
+			webRequest.Headers.Clear();
+			byte[] authData = System.Text.Encoding.UTF8.GetBytes(ap.ap.receiverecs[i].login + ":" + ap.ap.receiverecs[i].pass);
+			string authHeader = "Authorization: Basic " + Convert.ToBase64String(authData) + "\r\n";
+			webRequest.Headers.Add(authHeader);
+			this.Text = "PBI Status Reader";
+			try {
+				resp = (HttpWebResponse)webRequest.GetResponse();
+				if (HttpStatusCode.NotFound == resp.StatusCode)
+				{
+					// not found
+					MakeAllLightsYellow(i);
+					string tmplogmsg = "Адрес страницы не найден";
+					if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
+					{
+						ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
+						ap.ap.receiverecs[i].laststatus[0] = 2;
+						WriteToConnectionLog(i, tmplogmsg);
+					}
+					return;
+				}
+				else if (HttpStatusCode.OK == resp.StatusCode)
+				{
+					//Console.Write("Connection... OK");
+					Changelab(getlabelbyid(i), ap.ap.receiverecs[i].name);
+					Stream ReceiveStream = resp.GetResponseStream();
+					Encoding encode = System.Text.Encoding.GetEncoding("utf-8");
+					StreamReader readStream = new StreamReader(ReceiveStream, encode);
+					String str = "";
+					str = readStream.ReadToEnd();
+					
+					// если страница пустая, но коннект состоялся, лампочки будут жёлтыми
+					if (str.Length == 0) {
+						MakeAllLightsYellow(i);
+						string tmplogmsg = "Пустая страница. Возможно, произошло зависание устройства.";
+						if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
+						{
+							ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
+							ap.ap.receiverecs[i].laststatus[0] = 2;
+							WriteToConnectionLog(i, tmplogmsg);
+						}
+						Task.Factory.StartNew(() => getSelectedInput(i));
+						return;
+					}
+					Task.Factory.StartNew(() => getSelectedInput(i));
+					
+					for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+					{
+						//Console.WriteLine(j.ToString());
+						string pattern = ap.ap.receiverecs[i].regexps[j].ToString();
+						Regex newReg = new Regex(pattern);
+						Match matches = newReg.Match(str);
+						int currentstate = 0;
+						if (matches.Groups[1].Value == "1")  // if (matches.Groups[1].Success)
+						{
+							//Console.WriteLine(matches.Groups[1].Value);
+							setColorOfPictureBox(pictureBoxes[i, j], 1);
+							currentstate = 1;
+						}
+						else {
+							setColorOfPictureBox(pictureBoxes[i, j], 0);
+							currentstate = 0;
+						}
+						if (ap.ap.writetofile == true)
+						{
+							// блок для безусловной записи в определенное время
+							if (writing == true)
+							{
+								string tmpmsg = ap.ap.receiverecs[i].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[i].url;
+								Thread.Sleep(100);
+								WriteToLog(i, tmpmsg);
+								ap.ap.receiverecs[i].lastlogmsg[j] = tmpmsg;
+								ap.ap.receiverecs[i].laststatus[j] = currentstate;
+								if (ap.ap.receiverecs[i].m == j)
+								{
+									//writing = false;
+									return;
+								}
+								continue;
+							}
+							// блок для обычной записи
+							else {
+								// если состояние хоть одного параметра изменилось - пишем
+								if (ap.ap.receiverecs[i].laststatus[j] != currentstate)
+								{
+									string tmpmsg = ap.ap.receiverecs[i].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[i].url;
+									Thread.Sleep(100);
+									WriteToLog(i, tmpmsg);
+									ap.ap.receiverecs[i].lastlogmsg[j] = tmpmsg;
+								}
+							}
+						}
+						ap.ap.receiverecs[i].laststatus[j] = currentstate;
+					}
+				}
+			}
+			catch (System.ArgumentOutOfRangeException e)
+			{
+				MessageBox.Show("ArgumentOutOfRangeException: " + e.Message);
+			}
+			catch (Exception e)
+			{
+				if (!ap.ap.writetofile)
+					return;
+				Label tmp = getlabelbyid(i);
+				// увеличиваем счетчик неудачных подключений
+				ap.ap.receiverecs[i].counter = (ap.ap.receiverecs[i].counter + 1) % ap.ap.logconnectlimit; // счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
+				// если исключение появляется уже в (ap.ap.logconnectlimit - 1) раз
+				if (ap.ap.receiverecs[i].counter == ap.ap.logconnectlimit - 1)
+				{
+					// прошлое значение не было связано с проблемами подключения
+					if (ap.ap.receiverecs[i].laststatus[0] != 2)
+					{
+						for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+						{
+							// задаем статус ответа
+							ap.ap.receiverecs[i].laststatus[j] = 2;
+							// подсветить все лампочки желтым
+							setColorOfPictureBox(pictureBoxes[i, j], 2);
+						}
+						// пишем в лог только если предыдущее сообщение отличается от текущего (не пишем повторы)
+						if (ap.ap.receiverecs[i].lastlogmsg[0] != e.Message)
+						{
+							var st = new StackTrace(e, true);
+							var frame = st.GetFrame(0);
+							var line = frame.GetFileLineNumber();
+							WriteToConnectionLog(i, e.Message + " " + line.ToString());
+						}
+						
+					}
+				}
+			}
+		}
 
-        void setValues(object id)
+        void setValues(object writing)
         {
-                TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
-                int secondsSinceEpoch = (int)t.TotalSeconds;
-                //Console.Write(secondsSinceEpoch);
-                int idn = (int)id;
-                makeregulardynamiclabels(idn);
-                HttpWebResponse resp = null;
-                HttpWebRequest webRequest;
-                //webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(idn) + "/cgi-bin/input_status.cgi?cur_time=" + secondsSinceEpoch.ToString());
-                try
-                {
-                    webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(idn));
-                }
-                catch (System.UriFormatException)
-                {
-                    for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
-                    {
-                        setColorOfPictureBox(pictureBoxes[idn, j], 2);
-                    }
-
-                    string tmplogmsg = "В настройках задан неверный адрес.";
-                    if (ap.ap.receiverecs[idn].lastlogmsg[0] != tmplogmsg)
-                    {
-                        ap.ap.receiverecs[idn].lastlogmsg[0] = tmplogmsg;
-                        ap.ap.receiverecs[idn].laststatus[0] = 2;
-                        WriteToConnectionLog(idn, tmplogmsg);
-                    }
-                    return;
-                }
-                
-                webRequest.Method = "GET";
-                webRequest.Timeout = 5000; // 5 секунд таймаут
-                webRequest.Headers.Clear();
-                byte[] authData = System.Text.Encoding.UTF8.GetBytes(ap.ap.receiverecs[idn].login + ":" + ap.ap.receiverecs[idn].pass);
-                string authHeader = "Authorization: Basic " + Convert.ToBase64String(authData) + "\r\n";
-                webRequest.Headers.Add(authHeader);
-
-                this.Text = "PBI Status Reader";
-                try
-                {
-                    resp = (HttpWebResponse)webRequest.GetResponse();
-                    if (HttpStatusCode.NotFound == resp.StatusCode)
-                    {
-                        // not found
-                        for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
-                        {
-                            setColorOfPictureBox(pictureBoxes[idn, j], 2);
-                        }
-
-                        string tmplogmsg = "Адрес страницы не найден";
-                        if (ap.ap.receiverecs[idn].lastlogmsg[0] != tmplogmsg)
-                        {
-                            ap.ap.receiverecs[idn].lastlogmsg[0] = tmplogmsg;
-                            ap.ap.receiverecs[idn].laststatus[0] = 2;
-                            WriteToConnectionLog(idn, tmplogmsg);
-                        }
-                        return;
-                    }
-                    else if (HttpStatusCode.OK == resp.StatusCode)
-                    {
-                        //Console.Write("Connection... OK");
-                        Changelab(getlabelbyid(idn), ap.ap.receiverecs[idn].name);
-                        Stream ReceiveStream = resp.GetResponseStream();
-                        Encoding encode = System.Text.Encoding.GetEncoding("utf-8");
-                        StreamReader readStream = new StreamReader(ReceiveStream, encode);
-                        String str = "";
-                        str = readStream.ReadToEnd();
-                        // если страница пустая, но коннект состоялся, лампочки будут жёлтыми
-                        if (str.Length == 0)
-                        {
-                            for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
-                            {
-                                setColorOfPictureBox(pictureBoxes[idn, j], 2);
-                            }
-                            string tmplogmsg = "Пустая страница. Возможно, произошло зависание устройства.";
-                            if (ap.ap.receiverecs[idn].lastlogmsg[0] != tmplogmsg)
-                            {
-                                ap.ap.receiverecs[idn].lastlogmsg[0] = tmplogmsg;
-                                ap.ap.receiverecs[idn].laststatus[0] = 2;
-                                WriteToConnectionLog(idn, tmplogmsg);
-                            }
-                            Task.Factory.StartNew(() => getSelectedInput(idn));
-                            return;
-                        }
-                        //Console.WriteLine(String.Format("Response: {0}", str));
-                        Task.Factory.StartNew(() => getSelectedInput(idn));
-                        for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
-                        {
-                            Console.WriteLine(j.ToString());
-                            string pattern = ap.ap.receiverecs[idn].regexps[j].ToString();
-                            Regex newReg = new Regex(pattern);
-                            Match matches = newReg.Match(str);
-                            int currentstate = 0;
-                            if (matches.Groups[1].Value == "1")  // if (matches.Groups[1].Success)
-                            {
-                                //Console.WriteLine(matches.Groups[1].Value);
-                                setColorOfPictureBox(pictureBoxes[idn, j], 1);
-                                currentstate = 1;
-                            }
-                            else
-                            {
-                                setColorOfPictureBox(pictureBoxes[idn, j], 0);
-                                currentstate = 0;
-                            }
-
-                            if (ap.ap.writetofile == true)
-                            {
-                                // если полночь и данные уже записываются                             
-                                // блок для безусловной записи в определенное время
-                                if (writing == true)
-                                {
-                                    Console.WriteLine("write parameter " + j.ToString() + " " + ap.ap.receiverecs[idn].parameters[j]);
-                                    string tmpmsg = ap.ap.receiverecs[idn].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[idn].url;
-                                    Thread.Sleep(100);
-                                    WriteToLog(idn, tmpmsg);
-                                    ap.ap.receiverecs[idn].lastlogmsg[j] = tmpmsg;
-                                    ap.ap.receiverecs[idn].laststatus[j] = currentstate;
-                                    if (ap.ap.receiverecs[idn].m == j)
-                                        return;
-                                    continue;
-                                }
-                                // блок для обычной записи
-                                else
-                                {
-                                    // если состояние хоть одного параметра изменилось - пишем
-                                    if (ap.ap.receiverecs[idn].laststatus[j] != currentstate)
-                                    {
-                                        string tmpmsg = ap.ap.receiverecs[idn].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[idn].url;
-                                        Thread.Sleep(100);
-                                        WriteToLog(idn, tmpmsg);
-                                        ap.ap.receiverecs[idn].lastlogmsg[j] = tmpmsg;
-                                    }
-                                }
-                            }
-                            ap.ap.receiverecs[idn].laststatus[j] = currentstate;
-                        }
-                    }
-                }
-                catch (System.ArgumentOutOfRangeException e)
-                {
-                    MessageBox.Show("new exception: " + e.Message);
-                }
-                catch (Exception e)
-                {
-                    if (!ap.ap.writetofile)
-                        return;
-                    Label tmp = getlabelbyid(idn);
-
-                    // увеличиваем счетчик неудачных подключений
-                    ap.ap.receiverecs[idn].counter = (ap.ap.receiverecs[idn].counter + 1) % ap.ap.logconnectlimit; // счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
-                    // если исключение появляется уже в (ap.ap.logconnectlimit - 1) раз
-                    if (ap.ap.receiverecs[idn].counter == ap.ap.logconnectlimit - 1)
-                    {
-
-                        // прошлое значение не было связано с проблемами подключения
-                        if (ap.ap.receiverecs[idn].laststatus[0] != 2)
-                        {
-                            for (int j = 0; j < ap.ap.receiverecs[idn].m; j++)
-                            {
-                                // задаем статус ответа
-                                ap.ap.receiverecs[idn].laststatus[j] = 2;
-                                // подсветить все лампочки желтым
-                                setColorOfPictureBox(pictureBoxes[idn, j], 2);
-                            }
-
-                            // пишем в лог только если предыдущее сообщение отличается от текущего (не пишем повторы)
-                            if (ap.ap.receiverecs[idn].lastlogmsg[0] != e.Message)
-                            {
-                                var st = new StackTrace(e, true);
-                                var frame = st.GetFrame(0);
-                                var line = frame.GetFileLineNumber();
-                                WriteToConnectionLog(idn, e.Message + " " + line.ToString());
-                            }
-                        }
-                    }
-                }
+			bool canwewrite = (bool)writing;
+			makeregulardynamiclabels();
+			for (int i = 0; i<ap.ap.n; i++)
+			{
+				setValue(i,canwewrite);
+			}
         }
 
         private void настройкиToolStripMenuItem_Click(object sender, EventArgs e)
