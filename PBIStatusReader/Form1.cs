@@ -62,6 +62,9 @@ namespace PBIStatusReader
                 {
                     ap.ap.receiverecs[i].parameters.RemoveAll(item => item == null); // при десериализации в поле параметров появляются лишние null, этот код их убирает
                     ap.ap.receiverecs[i].regexps.RemoveAll(item => item == null);
+
+                    // пишем в лог о старте программы
+                    WriteToLog(i, "APP\tSTART");
                 }
             }
             n = ap.ap.n;
@@ -76,7 +79,7 @@ namespace PBIStatusReader
             writing = true;
             writingset = true;
             Task.Factory.StartNew(() => setValues(true));
-
+			Task.Factory.StartNew(() => getSelectedInputs(true));
             timer1.Start();
         }
 
@@ -123,7 +126,7 @@ namespace PBIStatusReader
         {
             recvnamelabels = new Label[10];
             this.Size = new Size((int)ap.ap.formwidth, (int)ap.ap.formheight);
-
+            this.Location = ap.ap.previousLocation;
             for (int i = 0; i < ap.ap.n; i++)
             {
                 recvnamelabels[i] = new Label();
@@ -220,7 +223,6 @@ namespace PBIStatusReader
             timer1.Tick += new EventHandler(timer1_Tick);
             timer1.Enabled = true;
             this.Text += " Загрузка данных...";
-
         }
 
         // полная перерисовка формы (для отображения изменения настроек на форме)
@@ -229,6 +231,7 @@ namespace PBIStatusReader
             ClearAllMainControls();
             DrawMainForm();
             this.Size = new Size((int)ap.ap.formwidth, (int)ap.ap.formheight);
+            //this.Location = ap.ap.previousLocation;
         }
 
         private void label4_Click(object sender, EventArgs e)
@@ -239,7 +242,14 @@ namespace PBIStatusReader
         // получение данных со всех устройств
         void globalScan()
         {
+            // если форма настроек открыта
+            if (isSettingsForm)
+                return;
+            // если уже выполняется процедура безусловной записи
+			if (writing)
+				return;
 			Task.Factory.StartNew(() => setValues(false));
+			Task.Factory.StartNew(() => getSelectedInputs(false));
         }
 
         void timer1_Tick(object sender, EventArgs e)
@@ -292,13 +302,13 @@ namespace PBIStatusReader
         string intToStatus(int st)
         {
             if (st == 1)
-                return "On";
+                return "ON";
             if (st == 0)
-                return "Off";
+                return "OFF";
             if (st == 2)
-                return "Error";
+                return "ERROR";
             else
-                return "Undefined";
+                return "UNDEFINED";
         }
 
         // процедура записи лога состояний подключения
@@ -326,7 +336,9 @@ namespace PBIStatusReader
 				// thread safety
 				conlocker.AcquireWriterLock(int.MaxValue);
                 curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\tCONNECT\tMESSAGE\t" + ap.ap.receiverecs[i].url + "\t" + message;
+                string logstamp = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t"; // 2017.02.20 00:00:01 NTV
+
+                string tofile = logstamp + message;
                 //string tofile = DateTime.Now.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
                 using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
                 {
@@ -401,6 +413,16 @@ namespace PBIStatusReader
             }
             catch (System.UriFormatException)
             {
+                if (ap.ap.writetofile == true)
+                {
+                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tWRONG URL\r\n";
+                    if (ap.ap.receiverecs[i].lastlogmsg[1] != tmplogmsg)
+                    {
+                        ap.ap.receiverecs[i].lastlogmsg[1] = tmplogmsg;
+                        WriteToConnectionLog(i, tmplogmsg);
+						ap.ap.receiverecs[i].lastactiveinput = "Unknown";
+                    }
+                }
                 return;
             }
             webRequest.Method = "GET";
@@ -436,11 +458,11 @@ namespace PBIStatusReader
                                     keypos = j;
                                     if ((ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j]) || (writingset))
                                     {
-                                            // изменился
-                                            string tolog = ap.ap.receiverecs[i].parameters[j] + "\tSET\t" + ap.ap.receiverecs[i].urlinput;
-                                            WriteToLog(i, tolog);
-                                            if (writingset)
-                                                writingset = false;
+                                        // изменился
+                                        string tolog = ap.ap.receiverecs[i].parameters[j] + "\tSET\t" + ap.ap.receiverecs[i].urlinput;
+                                        WriteToLog(i, tolog);
+                                        if (writingset)
+                                            writingset = false;
                                     }
                                     ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
                                     dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
@@ -449,9 +471,51 @@ namespace PBIStatusReader
                             }
                         }
                     }
+                    else
+                    {
+                        if (ap.ap.writetofile == true)
+                        {
+                            // шаблон не найден
+                            string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].urlinput + "\tНеверный шаблон поиска активного входа";
+                            if (ap.ap.receiverecs[i].lastlogmsg[1] != tmplogmsg)
+                            {
+                                ap.ap.receiverecs[i].lastlogmsg[1] = tmplogmsg;
+                                WriteToConnectionLog(i, tmplogmsg);
+								ap.ap.receiverecs[i].lastactiveinput = "Unknown";
+                            }
+                        }
+                    }
+                }
+                if (HttpStatusCode.NotFound == resp.StatusCode)
+                {
+                    // not found
+                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].urlinput + "\tNOT FOUND\r\n";
+                    if (ap.ap.receiverecs[i].lastlogmsg[1] != tmplogmsg)
+                    {
+                        ap.ap.receiverecs[i].lastlogmsg[1] = tmplogmsg;
+                        WriteToConnectionLog(i, tmplogmsg);
+						ap.ap.receiverecs[i].lastactiveinput = "Unknown";
+                    }
                 }
             }
-            catch {
+            catch (System.Net.WebException e)
+            {
+                if (ap.ap.writetofile)
+                {
+                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].urlinput + "\t" + e.Message;
+                    if (e.Status.ToString() == "Timeout")
+                        return;
+                    if (ap.ap.receiverecs[i].lastlogmsg[1] != e.Status.ToString())
+                    {
+                        ap.ap.receiverecs[i].lastlogmsg[1] = e.Status.ToString();
+                        WriteToConnectionLog(i, tmplogmsg);
+						ap.ap.receiverecs[i].lastactiveinput = "Unknown";
+                    }
+                }
+                return;
+            }
+            catch (Exception e)
+            {
             }
         }
 		
@@ -488,7 +552,7 @@ namespace PBIStatusReader
 			catch (System.UriFormatException)
 			{
 				MakeAllLightsYellow(i);
-				string tmplogmsg = "В настройках задан неверный адрес.";
+                string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tWRONG URL\r\n";
 				if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
 				{
 					ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
@@ -510,7 +574,7 @@ namespace PBIStatusReader
 				{
 					// not found
 					MakeAllLightsYellow(i);
-					string tmplogmsg = "Адрес страницы не найден";
+                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tNOT FOUND\r\n";
 					if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
 					{
 						ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
@@ -532,17 +596,15 @@ namespace PBIStatusReader
 					// если страница пустая, но коннект состоялся, лампочки будут жёлтыми
 					if (str.Length == 0) {
 						MakeAllLightsYellow(i);
-						string tmplogmsg = "Пустая страница. Возможно, произошло зависание устройства.";
+                        string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tПустая страница. Возможно, произошло зависание устройства.";
 						if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
 						{
 							ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
 							ap.ap.receiverecs[i].laststatus[0] = 2;
 							WriteToConnectionLog(i, tmplogmsg);
 						}
-						Task.Factory.StartNew(() => getSelectedInput(i));
 						return;
 					}
-					Task.Factory.StartNew(() => getSelectedInput(i));
 					
 					for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
 					{
@@ -551,15 +613,35 @@ namespace PBIStatusReader
 						Regex newReg = new Regex(pattern);
 						Match matches = newReg.Match(str);
 						int currentstate = 0;
-						if (matches.Groups[1].Value == "1")  // if (matches.Groups[1].Success)
+						if (matches.Groups[1].Success) // шаблон найден
 						{
-							//Console.WriteLine(matches.Groups[1].Value);
-							setColorOfPictureBox(pictureBoxes[i, j], 1);
-							currentstate = 1;
+							// параметр равен 1
+							if (matches.Groups[1].Value == "1") {
+								//Console.WriteLine(matches.Groups[1].Value);
+								setColorOfPictureBox(pictureBoxes[i, j], 1);
+								currentstate = 1;
+							}
+                            // параметр не равен 1 но равен другому числу
+							else {
+								setColorOfPictureBox(pictureBoxes[i, j], 0);
+								currentstate = 0;
+							}
 						}
 						else {
-							setColorOfPictureBox(pictureBoxes[i, j], 0);
-							currentstate = 0;
+							// шаблон не найден
+							setColorOfPictureBox(pictureBoxes[i, j], 2);
+							currentstate = 2;
+                            if (ap.ap.receiverecs[i].laststatus[j] != currentstate)
+                            {
+                                if (ap.ap.writetofile == true)
+                                {
+                                    string tmplogmsg = ap.ap.receiverecs[i].parameters[j] + "\tERROR\t" + ap.ap.receiverecs[i].url + "\t" + ap.ap.receiverecs[i].regexps[j];
+                                    ap.ap.receiverecs[i].lastlogmsg[j] = tmplogmsg;
+                                    WriteToConnectionLog(i, tmplogmsg);
+                                }
+                            }
+							ap.ap.receiverecs[i].laststatus[j] = currentstate;
+                            continue;
 						}
 						if (ap.ap.writetofile == true)
 						{
@@ -567,13 +649,13 @@ namespace PBIStatusReader
 							if (writing == true)
 							{
 								string tmpmsg = ap.ap.receiverecs[i].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[i].url;
-								Thread.Sleep(100);
 								WriteToLog(i, tmpmsg);
 								ap.ap.receiverecs[i].lastlogmsg[j] = tmpmsg;
 								ap.ap.receiverecs[i].laststatus[j] = currentstate;
 								if (ap.ap.receiverecs[i].m == j)
 								{
 									//writing = false;
+									ap.ap.receiverecs[i].laststatus[j] = currentstate;
 									return;
 								}
 								continue;
@@ -584,7 +666,6 @@ namespace PBIStatusReader
 								if (ap.ap.receiverecs[i].laststatus[j] != currentstate)
 								{
 									string tmpmsg = ap.ap.receiverecs[i].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[i].url;
-									Thread.Sleep(100);
 									WriteToLog(i, tmpmsg);
 									ap.ap.receiverecs[i].lastlogmsg[j] = tmpmsg;
 								}
@@ -624,7 +705,7 @@ namespace PBIStatusReader
 							var st = new StackTrace(e, true);
 							var frame = st.GetFrame(0);
 							var line = frame.GetFileLineNumber();
-							WriteToConnectionLog(i, e.Message + " " + line.ToString());
+                            WriteToConnectionLog(i, "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\t" + e.Message + " " + line.ToString());
 						}
 						
 					}
@@ -641,6 +722,15 @@ namespace PBIStatusReader
 				setValue(i,canwewrite);
 			}
         }
+		
+		void getSelectedInputs(object writingset)
+		{
+			bool canwewrite = (bool)writingset;
+			for (int i = 0; i<ap.ap.n; i++)
+			{
+				getSelectedInput(i);
+			}
+		}
 
         private void настройкиToolStripMenuItem_Click(object sender, EventArgs e)
         {
@@ -661,6 +751,11 @@ namespace PBIStatusReader
             ap.ap.formheight = (uint)this.Height;
             ap.ap.formwidth = (uint)this.Width;
             ap.WriteSettings();
+        }
+
+        private void Form1_LocationChanged(object sender, EventArgs e)
+        {
+            ap.ap.previousLocation = this.Location;
         }
     }
 
@@ -751,6 +846,7 @@ namespace PBIStatusReader
             public bool contype; // true = http, false = snmp
             public uint formwidth;
             public uint formheight;
+            public Point previousLocation;
             public string mainlogpath;
             public bool nestedpath;
             public List<ReceiverRecord> receiverecs = new List<ReceiverRecord>();
@@ -823,7 +919,8 @@ namespace PBIStatusReader
             ap.nestedpath = true;
             ap.formwidth = 606;
             ap.formheight = 567;
-            ap.mainlogpath = "C:\\";
+            ap.previousLocation = new Point(100, 100);
+            ap.mainlogpath = ".\\LOG";
         }
         // Set default settings (useful if there is no settings file yet)
         public void setdefaults(ReceiverRecord rr)
@@ -1395,6 +1492,18 @@ namespace PBIStatusReader
             }
         }
 
+        // restore previous laststatus fields
+        public void RestoreOldLastStatusFields(setstruct oldap, setstruct newap)
+        {
+            for (int i = 0; i < newap.n; i++)
+            {
+                for (int j = 0; j < newap.receiverecs[i].m; j++)
+                {
+                    newap.receiverecs[i].laststatus[j] = oldap.receiverecs[i].laststatus[j];
+                    newap.receiverecs[i].lastactiveinput = oldap.receiverecs[i].lastactiveinput;
+                }
+            }
+        }
         // read the settings from XML (deserialize)
         public bool ReadSettings()
         {
@@ -1403,9 +1512,11 @@ namespace PBIStatusReader
             try
             {
                 StreamReader reader = new StreamReader(ap.path);
+                setstruct oldap = ap; // сделаем копию объекта, чтобы сохранить состояния последнего считывания
                 ap = (setstruct)x.Deserialize(reader);
                 reader.Close();
                 reader.Dispose();
+                RestoreOldLastStatusFields(oldap, ap);
                 // ap.logconnectlimit can't be 0
                 if (ap.logconnectlimit == 0)
                     ap.logconnectlimit = 1;
@@ -1452,6 +1563,7 @@ namespace PBIStatusReader
             ap.mainlogpath = logmaindir.Text;
             ap.nestedpath = tnestedpath.Checked;
             ap.formwidth = Convert.ToUInt32(width.Value);
+            ap.previousLocation = formobj.Location;
             ap.formheight = Convert.ToUInt32(height.Value);
         }
 
@@ -1512,7 +1624,7 @@ namespace PBIStatusReader
 
             // timer 
             formobj.timer1.Interval = 1000*(int)ap.period;
-
+            // сам таймер запустится дальше внутри функции DrawMainForm
             formobj.RedrawForm();
         }
     }
