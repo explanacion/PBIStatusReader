@@ -126,7 +126,7 @@ namespace PBIStatusReader
         {
             recvnamelabels = new Label[10];
             this.Size = new Size((int)ap.ap.formwidth, (int)ap.ap.formheight);
-            this.Location = ap.ap.previousLocation;
+            this.Location = new Point(ap.ap.previousLocationX, ap.ap.previousLocationY);
             for (int i = 0; i < ap.ap.n; i++)
             {
                 recvnamelabels[i] = new Label();
@@ -677,7 +677,7 @@ namespace PBIStatusReader
 			}
 			catch (System.ArgumentOutOfRangeException e)
 			{
-				MessageBox.Show("ArgumentOutOfRangeException: " + e.Message);
+                MessageBox.Show("ArgumentOutOfRangeException: " + e.Message);
 			}
 			catch (Exception e)
 			{
@@ -755,7 +755,8 @@ namespace PBIStatusReader
 
         private void Form1_LocationChanged(object sender, EventArgs e)
         {
-            ap.ap.previousLocation = this.Location;
+            ap.ap.previousLocationX = this.Location.X;
+            ap.ap.previousLocationY = this.Location.Y;
         }
     }
 
@@ -846,7 +847,8 @@ namespace PBIStatusReader
             public bool contype; // true = http, false = snmp
             public uint formwidth;
             public uint formheight;
-            public Point previousLocation;
+            public int previousLocationX;
+            public int previousLocationY;
             public string mainlogpath;
             public bool nestedpath;
             public List<ReceiverRecord> receiverecs = new List<ReceiverRecord>();
@@ -919,7 +921,8 @@ namespace PBIStatusReader
             ap.nestedpath = true;
             ap.formwidth = 606;
             ap.formheight = 567;
-            ap.previousLocation = new Point(100, 100);
+            ap.previousLocationX = 100;
+            ap.previousLocationY = 100;
             ap.mainlogpath = ".\\LOG";
         }
         // Set default settings (useful if there is no settings file yet)
@@ -1512,11 +1515,14 @@ namespace PBIStatusReader
             try
             {
                 StreamReader reader = new StreamReader(ap.path);
-                setstruct oldap = ap; // сделаем копию объекта, чтобы сохранить состояния последнего считывания
                 ap = (setstruct)x.Deserialize(reader);
                 reader.Close();
                 reader.Dispose();
-                RestoreOldLastStatusFields(oldap, ap);
+                if (ap.receiverecs[0].laststatus[0] != 4)
+                {
+                    setstruct oldap = ap; // сделаем копию объекта, чтобы сохранить состояния последнего считывания
+                    RestoreOldLastStatusFields(oldap, ap);
+                }
                 // ap.logconnectlimit can't be 0
                 if (ap.logconnectlimit == 0)
                     ap.logconnectlimit = 1;
@@ -1563,7 +1569,8 @@ namespace PBIStatusReader
             ap.mainlogpath = logmaindir.Text;
             ap.nestedpath = tnestedpath.Checked;
             ap.formwidth = Convert.ToUInt32(width.Value);
-            ap.previousLocation = formobj.Location;
+            ap.previousLocationX = formobj.Location.X;
+            ap.previousLocationY = formobj.Location.Y;
             ap.formheight = Convert.ToUInt32(height.Value);
         }
 
