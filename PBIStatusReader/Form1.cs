@@ -13,6 +13,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System.Collections.Specialized;
 
 namespace PBIStatusReader
 {
@@ -22,17 +23,26 @@ namespace PBIStatusReader
         settings ap;
         public System.Windows.Forms.Timer timer1;
         public System.Timers.Timer timermidnight;
-        public bool writing; // флаг-индикатор записи
-        public bool writingset; // флаг-индикатор записи смены входа
+        public bool fwriting; // флаг-индикатор безусловной записи
+        public bool fwritingset; // флаг-индикатор безусловной записи смены входа
+        public bool appstarted; // флаг-индикатор того, что программа запущена, но данные ещё не считывались
         Label[] recvnamelabels;
         PictureBox[,] pictureBoxes = new PictureBox[10,5];
         //static HttpWebRequest webRequest;
         public Label[,] dynamicparamls;
-
+        public LogManager logger;
         public bool isSettingsForm; // форма настроек создана и активна
+        public bool isParamsForm; // форма настроек имен параметров или их шаблонов открыта и активна
+        public bool isFormatLogForm; // форма настроек формата логов создана и активна
 
-        public string[] oldparams = new string[10]; // буферы для хранения задаваемых настроек
-        public string[] oldregexps = new string[10]; 
+        public string[] oldparams = new string[10]; // буферы для хранения задаваемых через отдельные формы настроек
+        public string[] oldregexps = new string[10];
+
+        public string oldpatternLogOK = "%timestamp%\t%devicename%\tINPUT\t%paramname%\t%msg%\t%url%\t%regexp%";
+        public string oldpatternLogConFail = "%timestamp%\t%devicename%\tINPUT\t%paramname%\tERROR\t%url%\t%regexp%\t%msg%";
+        public string oldpatternDecoderOK = "%timestamp%\t%devicename%\tDECODER\t%paramname%\tSET\t%url%\t%msg%";
+        public string oldpatternDecoderConFail = "%timestamp%\t%devicename%\tDECODER\tURL\tERROR\t%url%\t%msg%";
+        public string oldpatternGeneralConFail = "%timestamp%\t%devicename%\tCONNECTION\tERROR\t%url%\t%msg%";
 		
 		// мьютекс для файлов
 		static ReaderWriterLock locker = new ReaderWriterLock();
@@ -44,17 +54,20 @@ namespace PBIStatusReader
             InitializeComponent();
             bool ifread = ap.ReadSettings(); // считываем записанные ранее настройки
             isSettingsForm = false;
-            writing = false;
-            writingset = false;
+            isParamsForm = false;
+            isFormatLogForm = false;
+            fwriting = false;
+            fwritingset = false;
             timer1 = new System.Windows.Forms.Timer();
             timermidnight = new System.Timers.Timer();
             SetTimerMidnight();
-
+            appstarted = true;
             if (!ifread)
             {
                 // настройки из файла не загрузились - ставим дефолтные
                 ap.SetGlobalDefaultSettings();
                 ap.setdefaults(ap.ap.receiverecs[0]);
+                // не удалось прочитать настройки
             }
             else
             {
@@ -62,11 +75,24 @@ namespace PBIStatusReader
                 {
                     ap.ap.receiverecs[i].parameters.RemoveAll(item => item == null); // при десериализации в поле параметров появляются лишние null, этот код их убирает
                     ap.ap.receiverecs[i].regexps.RemoveAll(item => item == null);
-
-                    // пишем в лог о старте программы
-                    WriteToLog(i, "APP\tSTART");
                 }
             }
+
+            if (ap.ap.patternLogOK == null)
+                ap.ap.patternLogOK = oldpatternLogOK;
+            if (ap.ap.patternLogConFail == null)
+                ap.ap.patternLogConFail = oldpatternLogConFail;
+            if (ap.ap.patternDecoderConFail == null)
+                ap.ap.patternDecoderConFail = oldpatternDecoderConFail;
+            if (ap.ap.patternGeneralConFail == null)
+                ap.ap.patternGeneralConFail = oldpatternGeneralConFail;
+            logger = new LogManager(ap);
+            for (int i = 0; i < ap.ap.n; i++)
+            {
+                // пишем в лог о старте программы
+                logger.rawWrite(i, logger.getTimeStamp() + "\t" + "APP\tSTART");
+            }
+
             n = ap.ap.n;
                 
             // рисуем форму
@@ -75,12 +101,12 @@ namespace PBIStatusReader
 
         public void MidNightScan()
         {
-            timer1.Stop();
-            writing = true;
-            writingset = true;
-            Task.Factory.StartNew(() => setValues(true));
-			Task.Factory.StartNew(() => getSelectedInputs(true));
-            timer1.Start();
+            // midnight - new day, we need to recreate log files
+			logger.reopenlogfiles();
+
+            fwriting = true;
+            fwritingset = true;
+            Task.Factory.StartNew(() => setValues(true)).ContinueWith(t => getSelectedInputs(true));
         }
 
         public void SetTimerMidnight()
@@ -246,14 +272,17 @@ namespace PBIStatusReader
             if (isSettingsForm)
                 return;
             // если уже выполняется процедура безусловной записи
-			if (writing)
+			if (fwriting)
 				return;
-			Task.Factory.StartNew(() => setValues(false));
-			Task.Factory.StartNew(() => getSelectedInputs(false));
+			if (fwritingset)
+				return;
+            Task.Factory.StartNew(() => setValues(false)).ContinueWith(t => getSelectedInputs(false));
         }
 
         void timer1_Tick(object sender, EventArgs e)
         {
+            if (appstarted)
+                appstarted = false;
             timer1.Stop();
             globalScan();
             timer1.Start();
@@ -311,99 +340,7 @@ namespace PBIStatusReader
                 return "UNDEFINED";
         }
 
-        // процедура записи лога состояний подключения
-        void WriteToConnectionLog(int i, string message)
-        {
-            if (!ap.ap.writetofile)
-                return;
-            string curpath = ap.ap.mainlogpath;
-            DateTime nw = DateTime.Now;
-
-            string subpath = "";
-            if (ap.ap.nestedpath)
-                subpath = nw.ToString("yyyy") + "\\" + nw.ToString("MM") + "\\" + nw.ToString("dd");
-            
-            if (curpath.EndsWith("\\"))
-                curpath = curpath + subpath;
-            else
-                curpath = curpath + "\\" + subpath;
-            try
-            {
-                if (!Directory.Exists(curpath))
-                {
-                    Directory.CreateDirectory(curpath);
-                }
-				// thread safety
-				conlocker.AcquireWriterLock(int.MaxValue);
-                curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string logstamp = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t"; // 2017.02.20 00:00:01 NTV
-
-                string tofile = logstamp + message;
-                //string tofile = DateTime.Now.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + ap.ap.receiverecs[i].url + "\t" + message;
-                using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
-                {
-                    str.WriteLine(tofile);
-                }  
-            }
-            catch (System.IO.IOException e)
-            {
-                MessageBox.Show(e.Message);
-            }
-            catch (System.UnauthorizedAccessException e)
-            {
-                MessageBox.Show(e.Message);
-            }
-			finally
-			{
-				conlocker.ReleaseWriterLock();
-			}
-        }
-        
-        // процедура записи лога
-        void WriteToLog(int i, string message)
-        {
-            if (!ap.ap.writetofile)
-                return;
-			
-            // формируем путь
-            string curpath = ap.ap.mainlogpath;
-            DateTime nw = DateTime.Now;
-            string subpath = "";
-            if (ap.ap.nestedpath)
-                subpath = nw.ToString("yyyy") + "\\" + nw.ToString("MM") + "\\" + nw.ToString("dd");
-            if (curpath.EndsWith("\\"))
-                curpath = curpath + subpath;
-            else
-                curpath = curpath + "\\" + subpath;
-            try
-            {
-                if (!Directory.Exists(curpath))
-                    Directory.CreateDirectory(curpath);
-				// thread safety
-				locker.AcquireWriterLock(int.MaxValue);
-                curpath = curpath + "\\" + ap.ap.receiverecs[i].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
-                string tofile = nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss") + "\t" + ap.ap.receiverecs[i].name + "\t" + message;
-
-                using (var str = new StreamWriter(File.Open(curpath, FileMode.Append), Encoding.UTF8))
-                {
-                    str.WriteLine(tofile);
-                }
-            }
-            catch (System.IO.IOException e)
-            {
-                MessageBox.Show(e.Message);
-            }
-            catch (System.UnauthorizedAccessException e)
-            {
-                MessageBox.Show(e.Message);
-            }
-			finally
-			{
-				locker.ReleaseWriterLock();
-			}
-        }
-
-        void getSelectedInput(int i)
+        void getSelectedInput(int i, bool writingset)
         {
             HttpWebResponse resp = null;
             HttpWebRequest webRequest;
@@ -411,18 +348,9 @@ namespace PBIStatusReader
             {
                 webRequest = (HttpWebRequest)WebRequest.Create(ap.ap.receiverecs[i].urlinput);
             }
-            catch (System.UriFormatException)
+            catch (System.UriFormatException e)
             {
-                if (ap.ap.writetofile == true)
-                {
-                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tWRONG URL\r\n";
-                    if (ap.ap.receiverecs[i].lastlogmsg[1] != tmplogmsg)
-                    {
-                        ap.ap.receiverecs[i].lastlogmsg[1] = tmplogmsg;
-                        WriteToConnectionLog(i, tmplogmsg);
-						ap.ap.receiverecs[i].lastactiveinput = "Unknown";
-                    }
-                }
+                logger.WriteToLog(4,i,0,e.Message);
                 return;
             }
             webRequest.Method = "GET";
@@ -456,13 +384,19 @@ namespace PBIStatusReader
                                 if (bolditem.IndexOf(ap.ap.receiverecs[i].parameters[j]) != -1)
                                 {
                                     keypos = j;
-                                    if ((ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j]) || (writingset))
+                                    // блок для безусловной записи по таймеру
+                                    if (writingset)
+                                    {
+                                        logger.WriteToLog(3, i, j, pattern);
+                                        ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j];
+                                        fwritingset = false;
+                                        return;
+                                    }
+
+                                    if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
                                     {
                                         // изменился
-                                        string tolog = ap.ap.receiverecs[i].parameters[j] + "\tSET\t" + ap.ap.receiverecs[i].urlinput;
-                                        WriteToLog(i, tolog);
-                                        if (writingset)
-                                            writingset = false;
+                                        logger.WriteToLog(3, i, j, pattern);
                                     }
                                     ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
                                     dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
@@ -473,49 +407,27 @@ namespace PBIStatusReader
                     }
                     else
                     {
-                        if (ap.ap.writetofile == true)
-                        {
-                            // шаблон не найден
-                            string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].urlinput + "\tНеверный шаблон поиска активного входа";
-                            if (ap.ap.receiverecs[i].lastlogmsg[1] != tmplogmsg)
-                            {
-                                ap.ap.receiverecs[i].lastlogmsg[1] = tmplogmsg;
-                                WriteToConnectionLog(i, tmplogmsg);
-								ap.ap.receiverecs[i].lastactiveinput = "Unknown";
-                            }
-                        }
+                        // шаблон не найден
+                        logger.WriteToLog(4, i, 0, "Шаблон поиска активного входа не найден");
                     }
                 }
                 if (HttpStatusCode.NotFound == resp.StatusCode)
                 {
                     // not found
-                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].urlinput + "\tNOT FOUND\r\n";
-                    if (ap.ap.receiverecs[i].lastlogmsg[1] != tmplogmsg)
-                    {
-                        ap.ap.receiverecs[i].lastlogmsg[1] = tmplogmsg;
-                        WriteToConnectionLog(i, tmplogmsg);
-						ap.ap.receiverecs[i].lastactiveinput = "Unknown";
-                    }
+                    logger.WriteToLog(4, i, 0, resp.StatusCode + " " + resp.StatusDescription);
                 }
             }
             catch (System.Net.WebException e)
             {
-                if (ap.ap.writetofile)
-                {
-                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].urlinput + "\t" + e.Message;
-                    if (e.Status.ToString() == "Timeout")
-                        return;
-                    if (ap.ap.receiverecs[i].lastlogmsg[1] != e.Status.ToString())
-                    {
-                        ap.ap.receiverecs[i].lastlogmsg[1] = e.Status.ToString();
-                        WriteToConnectionLog(i, tmplogmsg);
-						ap.ap.receiverecs[i].lastactiveinput = "Unknown";
-                    }
-                }
-                return;
+                if (e.Status.ToString() == "RequestCanceled")
+                    return;
+                if (e.Status.ToString() == "Timeout")
+                    return;
+                logger.WriteToLog(4, i, 0, e.Status.ToString() + " " + e.Message);
             }
             catch (Exception e)
             {
+                logger.WriteToLog(4, i, 0, e.Message);
             }
         }
 		
@@ -549,16 +461,10 @@ namespace PBIStatusReader
 			{
 				webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(i));
 			}
-			catch (System.UriFormatException)
+			catch (System.UriFormatException e)
 			{
 				MakeAllLightsYellow(i);
-                string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tWRONG URL\r\n";
-				if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
-				{
-					ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
-					ap.ap.receiverecs[i].laststatus[0] = 2;
-					WriteToConnectionLog(i, tmplogmsg);
-				}
+                logger.WriteToLog(4, i, 0, e.Message);
 				return;
 			}
 			webRequest.Method = "GET";
@@ -568,149 +474,108 @@ namespace PBIStatusReader
 			string authHeader = "Authorization: Basic " + Convert.ToBase64String(authData) + "\r\n";
 			webRequest.Headers.Add(authHeader);
 			this.Text = "PBI Status Reader";
-			try {
-				resp = (HttpWebResponse)webRequest.GetResponse();
-				if (HttpStatusCode.NotFound == resp.StatusCode)
-				{
-					// not found
-					MakeAllLightsYellow(i);
-                    string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tNOT FOUND\r\n";
-					if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
-					{
-						ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
-						ap.ap.receiverecs[i].laststatus[0] = 2;
-						WriteToConnectionLog(i, tmplogmsg);
-					}
-					return;
-				}
-				else if (HttpStatusCode.OK == resp.StatusCode)
-				{
-					//Console.Write("Connection... OK");
-					Changelab(getlabelbyid(i), ap.ap.receiverecs[i].name);
-					Stream ReceiveStream = resp.GetResponseStream();
-					Encoding encode = System.Text.Encoding.GetEncoding("utf-8");
-					StreamReader readStream = new StreamReader(ReceiveStream, encode);
-					String str = "";
-					str = readStream.ReadToEnd();
-					
-					// если страница пустая, но коннект состоялся, лампочки будут жёлтыми
-					if (str.Length == 0) {
-						MakeAllLightsYellow(i);
-                        string tmplogmsg = "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\tПустая страница. Возможно, произошло зависание устройства.";
-						if (ap.ap.receiverecs[i].lastlogmsg[0] != tmplogmsg)
-						{
-							ap.ap.receiverecs[i].lastlogmsg[0] = tmplogmsg;
-							ap.ap.receiverecs[i].laststatus[0] = 2;
-							WriteToConnectionLog(i, tmplogmsg);
-						}
-						return;
-					}
-					
-					for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
-					{
-						//Console.WriteLine(j.ToString());
-						string pattern = ap.ap.receiverecs[i].regexps[j].ToString();
-						Regex newReg = new Regex(pattern);
-						Match matches = newReg.Match(str);
-						int currentstate = 0;
-						if (matches.Groups[1].Success) // шаблон найден
-						{
-							// параметр равен 1
-							if (matches.Groups[1].Value == "1") {
-								//Console.WriteLine(matches.Groups[1].Value);
-								setColorOfPictureBox(pictureBoxes[i, j], 1);
-								currentstate = 1;
-							}
-                            // параметр не равен 1 но равен другому числу
-							else {
-								setColorOfPictureBox(pictureBoxes[i, j], 0);
-								currentstate = 0;
-							}
-						}
-						else {
-							// шаблон не найден
-							setColorOfPictureBox(pictureBoxes[i, j], 2);
-							currentstate = 2;
-                            if (ap.ap.receiverecs[i].laststatus[j] != currentstate)
+            try
+            {
+                resp = (HttpWebResponse)webRequest.GetResponse();
+                if (HttpStatusCode.NotFound == resp.StatusCode)
+                {
+                    // not found
+                    MakeAllLightsYellow(i);
+                    logger.WriteToLog(4, i, 0, resp.StatusCode + " " + resp.StatusDescription);
+                    return;
+                }
+                else if (HttpStatusCode.OK == resp.StatusCode)
+                {
+                    //Console.Write("Connection... OK");
+                    Changelab(getlabelbyid(i), ap.ap.receiverecs[i].name);
+                    Stream ReceiveStream = resp.GetResponseStream();
+                    Encoding encode = System.Text.Encoding.GetEncoding("utf-8");
+                    StreamReader readStream = new StreamReader(ReceiveStream, encode);
+                    String str = "";
+                    str = readStream.ReadToEnd();
+
+                    // если страница пустая, но коннект состоялся, лампочки будут жёлтыми
+                    if (str.Length == 0)
+                    {
+                        MakeAllLightsYellow(i);
+                        logger.WriteToLog(4, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
+                        return;
+                    }
+
+                    for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+                    {
+                        //Console.WriteLine(j.ToString() + " " + ap.ap.receiverecs[i].m.ToString());
+                        string pattern = ap.ap.receiverecs[i].regexps[j].ToString();
+                        Regex newReg = new Regex(pattern);
+                        Match matches = newReg.Match(str);
+                        int currentstate = 0;
+                        if (matches.Groups[1].Success) // шаблон найден
+                        {
+                            // параметр равен 1
+                            if (matches.Groups[1].Value == "1")
                             {
-                                if (ap.ap.writetofile == true)
-                                {
-                                    string tmplogmsg = ap.ap.receiverecs[i].parameters[j] + "\tERROR\t" + ap.ap.receiverecs[i].url + "\t" + ap.ap.receiverecs[i].regexps[j];
-                                    ap.ap.receiverecs[i].lastlogmsg[j] = tmplogmsg;
-                                    WriteToConnectionLog(i, tmplogmsg);
-                                }
+                                //Console.WriteLine(matches.Groups[1].Value);
+                                setColorOfPictureBox(pictureBoxes[i, j], 1);
+                                currentstate = 1;
                             }
-							ap.ap.receiverecs[i].laststatus[j] = currentstate;
+                            // параметр не равен 1 но равен другому числу
+                            else
+                            {
+                                setColorOfPictureBox(pictureBoxes[i, j], 0);
+                                currentstate = 0;
+                            }
+                        }
+                        else
+                        {
+                            // шаблон не найден
+                            setColorOfPictureBox(pictureBoxes[i, j], 2);
+                            currentstate = 2;
+                            logger.WriteToLog(0, i, j, "По шаблону для поиска параметров ничего не найдено. Возможно, он задан неверно.");
                             continue;
-						}
-						if (ap.ap.writetofile == true)
-						{
-							// блок для безусловной записи в определенное время
-							if (writing == true)
-							{
-								string tmpmsg = ap.ap.receiverecs[i].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[i].url;
-								WriteToLog(i, tmpmsg);
-								ap.ap.receiverecs[i].lastlogmsg[j] = tmpmsg;
-								ap.ap.receiverecs[i].laststatus[j] = currentstate;
-								if (ap.ap.receiverecs[i].m == j)
-								{
-									//writing = false;
-									ap.ap.receiverecs[i].laststatus[j] = currentstate;
-									return;
-								}
-								continue;
-							}
-							// блок для обычной записи
-							else {
-								// если состояние хоть одного параметра изменилось - пишем
-								if (ap.ap.receiverecs[i].laststatus[j] != currentstate)
-								{
-									string tmpmsg = ap.ap.receiverecs[i].parameters[j] + "\t" + intToStatus(currentstate) + "\t" + ap.ap.receiverecs[i].url;
-									WriteToLog(i, tmpmsg);
-									ap.ap.receiverecs[i].lastlogmsg[j] = tmpmsg;
-								}
-							}
-						}
-						ap.ap.receiverecs[i].laststatus[j] = currentstate;
-					}
-				}
-			}
-			catch (System.ArgumentOutOfRangeException e)
-			{
+                        }
+                        if (ap.ap.writetofile == true)
+                        {
+                            // блок для безусловной записи в определенное время
+                            if (writing == true)
+                            {
+                                string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
+                                if (j>=ap.ap.receiverecs[i].m-1)
+                                {
+									if (i>=ap.ap.n) {
+										logger.rawWrite(i, "\r\n");
+										fwriting = false;
+									}
+									logger.rawWrite(i, tmpmsg);
+                                    return;
+                                }
+                                logger.rawWrite(i, tmpmsg);
+                                continue;
+                            }
+                            // блок для обычной записи
+                            else
+                            {
+                                string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
+                                // если состояние хоть одного параметра изменилось - пишем
+                                //if (ap.ap.receiverecs[i].lastlogmsg[j] != tmpmsg)
+                                logger.WriteToLog(1, i, j, intToStatus(currentstate));
+                            }
+                        }
+                        ap.ap.receiverecs[i].lastlogmsg[j] = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
+                    }
+                }
+            }
+            catch (System.ArgumentOutOfRangeException e)
+            {
                 MessageBox.Show("ArgumentOutOfRangeException: " + e.Message);
-			}
-			catch (Exception e)
-			{
-				if (!ap.ap.writetofile)
-					return;
-				Label tmp = getlabelbyid(i);
-				// увеличиваем счетчик неудачных подключений
-				ap.ap.receiverecs[i].counter = (ap.ap.receiverecs[i].counter + 1) % ap.ap.logconnectlimit; // счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
-				// если исключение появляется уже в (ap.ap.logconnectlimit - 1) раз
-				if (ap.ap.receiverecs[i].counter == ap.ap.logconnectlimit - 1)
-				{
-					// прошлое значение не было связано с проблемами подключения
-					if (ap.ap.receiverecs[i].laststatus[0] != 2)
-					{
-						for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
-						{
-							// задаем статус ответа
-							ap.ap.receiverecs[i].laststatus[j] = 2;
-							// подсветить все лампочки желтым
-							setColorOfPictureBox(pictureBoxes[i, j], 2);
-						}
-						// пишем в лог только если предыдущее сообщение отличается от текущего (не пишем повторы)
-						if (ap.ap.receiverecs[i].lastlogmsg[0] != e.Message)
-						{
-							var st = new StackTrace(e, true);
-							var frame = st.GetFrame(0);
-							var line = frame.GetFileLineNumber();
-                            WriteToConnectionLog(i, "APP\tERROR\t" + ap.ap.receiverecs[i].url + "\t" + e.Message + " " + line.ToString());
-						}
-						
-					}
-				}
-			}
+            }
+            catch (Exception e)
+            {
+
+                MakeAllLightsYellow(i);
+                // пишем в лог
+                logger.WriteToLog(4, i, 0, e.Message);
+                return;
+            }
 		}
 
         void setValues(object writing)
@@ -728,7 +593,7 @@ namespace PBIStatusReader
 			bool canwewrite = (bool)writingset;
 			for (int i = 0; i<ap.ap.n; i++)
 			{
-				getSelectedInput(i);
+				getSelectedInput(i,canwewrite);
 			}
 		}
 
@@ -758,6 +623,301 @@ namespace PBIStatusReader
             ap.ap.previousLocationX = this.Location.X;
             ap.ap.previousLocationY = this.Location.Y;
         }
+
+        private void Form1_KeyDown(object sender, KeyEventArgs e)
+        {
+            if ((e.Control && e.KeyCode == Keys.C))
+            {
+                MessageBox.Show("fwriting = " + fwriting.ToString() + ", fwritingset = " + fwritingset.ToString() + ", timer1 is " + timer1.Enabled.ToString() + "\r\n" + "timer1 inteval = " + timer1.Interval);
+            }
+        }
+    }
+
+    public class LogManager
+    {
+        string filepath;
+        settings apobj;
+        int currentIndex;
+        IDictionary<int, int> connectionfailcnt = new Dictionary<int, int>();
+        System.Collections.Generic.Dictionary<int,string>[] lastlogmsg; // буфер для хранения последних сообщений
+        System.Collections.Generic.Dictionary<int, string>[] lastlogdecodermsg; // буфер для хранения последних сообщений декодера
+        StreamWriter[] logwriters;
+        public int oldsize;
+        public LogManager(settings ap)
+        {
+            setap(ap);
+            filepath = ap.ap.mainlogpath;
+            oldsize = ap.ap.n;
+            currentIndex = -1;
+            if (!Directory.Exists(filepath))
+                Directory.CreateDirectory(filepath);
+            logwriters = new StreamWriter[apobj.ap.maxn];
+            lastlogmsg = new Dictionary<int, string>[apobj.ap.maxn];
+            lastlogdecodermsg = new Dictionary<int, string>[apobj.ap.maxn];
+            for (int i = 0; i < apobj.ap.n; i++)
+            {
+                if (!Directory.Exists(Path.GetDirectoryName(getLogPath(i))))
+                    Directory.CreateDirectory(Path.GetDirectoryName(getLogPath(i)));
+                logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
+                lastlogmsg[i] = new Dictionary<int, string>();
+                lastlogdecodermsg[i] = new Dictionary<int, string>();
+                unsetLastLogMsgs(i, apobj);
+            }
+        }
+
+        public void reopenlogfiles()
+        {
+            for (int i = 0; i < apobj.ap.n; i++)
+            {
+                logwriters[i].Close();
+                unsetLastLogMsgs(i, apobj);
+				//Console.WriteLine(getLogPath(i));
+                logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
+            }
+        }
+
+        public void setap(settings newap)
+        {
+            this.apobj = newap;
+        }
+
+        public bool isFileLocked(int i)
+        {
+            try
+            {
+                using (Stream strm = new FileStream(getLogPath(i),FileMode.Open))
+                {
+                    return false;
+                }
+            }
+            catch {
+                return true;
+            }
+        }
+		
+		public bool incrementCnt(int i)
+		{
+			// счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
+			apobj.ap.receiverecs[i].counter = (apobj.ap.receiverecs[i].counter + 1) % apobj.ap.logconnectlimit;
+            // Console.WriteLine(i.ToString() + " trigger " + apobj.ap.receiverecs[i].counter.ToString());
+			if (apobj.ap.receiverecs[i].counter >= apobj.ap.logconnectlimit - 1)
+			{
+				return true;
+			}
+			return false;
+		}
+
+        private void unsetLastLogMsgs(int i, settings ap)
+        {
+            for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+            {
+                if (lastlogmsg[i].ContainsKey(j))
+                    lastlogmsg[i][j] = "";
+                else
+                    lastlogmsg[i].Add(j, "");
+                if (lastlogdecodermsg[i].ContainsKey(j))
+                    lastlogdecodermsg[i][j] = "";
+                else
+                    lastlogdecodermsg[i].Add(j, "");
+            }
+        }
+
+        public void ResizeLoggers(int newsize)
+        {
+            if (newsize > oldsize)
+            {
+                for (int i = 0; i < newsize; i++)
+                {
+                    if (logwriters.ElementAt(i) == null)
+                    {
+                        // new devices
+                        logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
+                        lastlogmsg[i] = new Dictionary<int, string>();
+                        lastlogdecodermsg[i] = new Dictionary<int, string>();
+                        unsetLastLogMsgs(i, apobj);
+                    }
+                    else
+                    {
+                        string curpath = ((FileStream)(logwriters[i].BaseStream)).Name;
+                        if (curpath.IndexOf(Path.GetFileName(getLogPath(i))) != -1)
+                        {
+                            // this file is already in use
+                            continue;
+                        }
+                        else
+                        {
+                            if (isFileLocked(i))
+                            {
+                                logwriters[i].Close();
+                                logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
+                                unsetLastLogMsgs(i, apobj);
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // число устройств уменьшилось - просто проверяем все файлы - изменились ли имена
+                for (int i = 0; i < newsize; i++)
+                {
+
+                    string curpath = ((FileStream)(logwriters[i].BaseStream)).Name;
+                    if (curpath.IndexOf(Path.GetFileName(getLogPath(i))) == -1)
+                    {
+                        // filename has been changed
+                        logwriters[i].Close();
+                        logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
+                        unsetLastLogMsgs(i, apobj);
+                    }
+                    else
+                    {
+                    }
+                }
+            }
+        }
+
+        // проверка на дублирующее сообщение
+        public bool isNewLastMsg(int i, int j, string currentmsg)
+        {
+            if (lastlogmsg[i][j] == "" && lastlogdecodermsg[i][j] == "")
+                return true;
+			//Console.WriteLine("dupl msg check: " + lastlogmsg[i][j] + " " + currentmsg);
+            if (lastlogmsg[i][j].IndexOf(currentmsg) != -1 || lastlogdecodermsg[i][j].IndexOf(currentmsg) != -1)
+            {
+                    return false;
+            }
+            return true;
+        }
+
+        public void SetLastMsg(int type, int i, int j, string currentmsg)
+        {
+            if (type == 0 || type == 1 || type == 4)
+                lastlogmsg[i][j] = currentmsg;
+            else
+                lastlogdecodermsg[i][j] = currentmsg;
+        }
+
+
+        // generate new message to write to the log file
+        public string CreateLogMsg(int type, int i, int j, string msg)
+        {
+            // connection main log
+            if (type == 0)
+            {
+                string tofile = apobj.ap.patternLogConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("%msg%", msg).Replace("\\t", "\t");
+                return tofile;
+            }
+            // normal log
+            if (type == 1)
+            {
+                // check last message
+                string tofile = apobj.ap.patternLogOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("%msg%", msg).Replace("\\t","\t");
+                return tofile;
+            }
+            // connection decoder log
+            if (type == 2)
+            {
+                string tofile = apobj.ap.patternDecoderConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].urlinput).Replace("%msg%", msg).Replace("\\t", "\t");
+                return tofile;
+            }
+            // decoder normal log
+            if (type == 3)
+            {
+                string tofile = apobj.ap.patternDecoderOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].urlinput).Replace("%msg%", msg).Replace("\\t", "\t");
+                return tofile;
+            }
+            
+            // general connection fail
+            if (type == 4)
+            {
+                string tofile = apobj.ap.patternGeneralConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%msg%", msg);
+                return tofile;
+            }
+
+            return "";
+        }
+
+        public void WriteToLog(int type, int i, int j, string msg)
+        {
+            //MessageBox.Show(i.ToString() + " " + j.ToString());
+            if (!apobj.ap.writetofile)
+                return;
+			if (type == 4) {
+				// general connection error
+                //Console.WriteLine(i.ToString() + " " + apobj.ap.receiverecs[i].counter.ToString());
+				if (!incrementCnt(i))
+					return;
+			}
+            string tofile = CreateLogMsg(type, i, j, msg);
+            if (!isNewLastMsg(i,j,msg))
+                return;
+            SetLastMsg(type, i, j, tofile);
+            rawWrite(i, tofile);
+        }
+
+        public void rawWrite(int i, string msg)
+        {
+            if (msg == "")
+                return;
+            try
+            {
+                logwriters[i].WriteLine(msg.ToArray(),0,msg.Length);
+                logwriters[i].AutoFlush = true;
+                //logwriters[i].Flush();
+            }
+            catch (System.IO.IOException e)
+            {
+                MessageBox.Show(e.Message);
+            }
+            catch (System.UnauthorizedAccessException e)
+            {
+                MessageBox.Show(e.Message);
+            }
+            catch (Exception e)
+            {
+                MessageBox.Show(e.Message);
+            }
+            //finally
+            //{
+            //    locker.ReleaseWriterLock();
+            //}
+        }
+
+        public void setLogPath()
+        {
+            filepath = getLogPath(currentIndex);
+        }
+        public string getLogPath(int index)
+        {
+            DateTime nw = DateTime.Now;
+            string fpath = apobj.ap.mainlogpath;
+            string subpath = "";
+            if (apobj.ap.nestedpath)
+            {
+                subpath = nw.ToString("yyyy") + "\\" + nw.ToString("MM") + "\\" + nw.ToString("dd");
+            }
+            if (fpath.EndsWith("\\"))
+            {
+                fpath = fpath + subpath;
+            }
+            else
+            {
+                fpath = fpath + "\\" + subpath;
+            }
+            if (!Directory.Exists(fpath))
+                Directory.CreateDirectory(fpath);
+            // thread safety
+            // locker.AcquireWriterLock(int.MaxValue);
+            fpath = fpath + "\\" + apobj.ap.receiverecs[index].name + "_" + nw.ToString("yyyy-MM-dd") + ".log";
+            return fpath;
+        }
+
+        public string getTimeStamp()
+        {
+            DateTime nw = DateTime.Now;
+            return nw.ToString("yyyy/MM/dd") + "\t" + nw.ToString("HH:mm:ss");
+        }
     }
 
     public class ReceiverRecord
@@ -769,11 +929,10 @@ namespace PBIStatusReader
         public string pass;
 
         [XmlIgnore]
-        public List<int> laststatus; // значение последних считанных параметров (статусы), по 1 на параметр
-        [XmlIgnore]
         public List<string> lastlogmsg; // последние записанные в лог сообщения, по 1 на параметр
         [XmlIgnore]
         public string lastactiveinput; // предыдущий активный вход
+        [XmlIgnore]
         public int counter; // счетчик перебоев с соединением
 
         public List<string> parameters;
@@ -786,12 +945,7 @@ namespace PBIStatusReader
             counter = 0;
             parameters = new List<string>(new string[m]);
             regexps = new List<string>(new string[m]);
-            laststatus = new List<int>(new int[m]);
             lastactiveinput = ""; // предыдущий активный вход
-            for (int j = 0; j < m; j++)
-            {
-                laststatus[j] = 4;
-            }
             lastlogmsg = new List<string>(new string[m]);
         }
 
@@ -801,12 +955,7 @@ namespace PBIStatusReader
             counter = 0;
             parameters = new List<string>(new string[m]);
             regexps = new List<string>(new string[m]);
-            laststatus = new List<int>(new int[m]);
             lastactiveinput = ""; // предыдущий активный вход
-            for (int j = 0; j < m; j++)
-            {
-                laststatus[j] = 4;
-            }
             lastlogmsg = new List<string>(new string[m]);
         }
 
@@ -818,7 +967,6 @@ namespace PBIStatusReader
             {
                 parameters.RemoveRange(newm, countr - newm);
                 regexps.RemoveRange(newm, countr - newm);
-                laststatus.RemoveRange(newm, countr - newm);
                 lastlogmsg.RemoveRange(newm, countr - newm);
             }
             else if (newm > countr)
@@ -827,7 +975,6 @@ namespace PBIStatusReader
                 {
                     parameters.AddRange(new List<string>(new string[newm - countr]));
                     regexps.AddRange(new List<string>(new string[newm - countr]));
-                    laststatus.AddRange(new List<int>(new int[newm - countr]));
                     lastlogmsg.AddRange(new List<string>(new string[newm - countr]));
                 }
             }
@@ -841,6 +988,7 @@ namespace PBIStatusReader
         {
             public int n = 1;
             public int m = 5;
+            public int maxn = 10; // максимальное число ресиверов
             public string path = "MySettings.xml"; // main conf file
             public uint period;
             public bool writetofile;
@@ -851,6 +999,11 @@ namespace PBIStatusReader
             public int previousLocationY;
             public string mainlogpath;
             public bool nestedpath;
+            public string patternLogOK;
+            public string patternLogConFail;
+            public string patternDecoderOK;
+            public string patternDecoderConFail;
+            public string patternGeneralConFail;
             public List<ReceiverRecord> receiverecs = new List<ReceiverRecord>();
             public int logconnectlimit; // число неудачных попыток подключения перед записью в лог
         }
@@ -880,6 +1033,7 @@ namespace PBIStatusReader
         TextBox[] passwords;
         CheckBox twritetofile;
         CheckBox tnestedpath;
+        Button setlogpatterns;
         Label inform;
         NumericUpDown tperiod;
         Button okbutton;
@@ -924,6 +1078,21 @@ namespace PBIStatusReader
             ap.previousLocationX = 100;
             ap.previousLocationY = 100;
             ap.mainlogpath = ".\\LOG";
+			// шаблон, используемый для записи в лог при изменении состояния входов - ON, OFF
+			// общий вид - 2017.02.23	08:58:09    PTN INPUT   IP	ON  http://192.168.4.232/cgi-bin/input_status.cgi   <ip value="\d">\W+<lock value="(\d+?)">
+            ap.patternLogOK = "%timestamp%\t%devicename%\tINPUT\t%paramname%\t%msg%\t%url%\t%regexp%";
+			// шаблон, по которому в лог пишутся любые ошибки и проблемы с подключением и соединением
+			// общий вид - 2017.02.23	08:58:38    PTN INPUT   ASI3                ERROR   http://        <asi3>
+            ap.patternLogConFail = "%timestamp%\t%devicename%\tINPUT\t%paramname%\tERROR\t%url%\t%regexp%\t%msg%";
+			// шаблон, по которому в лог пишется текущий активный вход, или его изменение
+			// общий вид - 2017.02.23        11:53:04        TNT        DECODER        IP                SET                http://        selected>
+			ap.patternDecoderOK = "%timestamp%\t%devicename%\tDECODER\t%paramname%\tSET\t%url%\t%msg%";
+			// шаблон, по которому в лог пишется сообщение об ошибках при попытке получить активный вход
+			// 2017.02.23        11:53:04        TNT        DECODER        URL                ERROR        http://        не могу найти страницу
+			ap.patternDecoderConFail = "%timestamp%\t%devicename%\tDECODER\tURL\tERROR\t%url%\t%msg%";
+			// шаблон, по которому в лог пишется сообщение об ошибках соединения безотносительно параметра
+			// общий вид - 2017.02.23        11:53:04        TNT        CONNECTION  ERROR   http:// msg
+            ap.patternGeneralConFail = "%timestamp%\t%devicename%\tCONNECTION\tERROR\t%url%\t%msg%";
         }
         // Set default settings (useful if there is no settings file yet)
         public void setdefaults(ReceiverRecord rr)
@@ -938,11 +1107,6 @@ namespace PBIStatusReader
             rr.parameters[2] = "ASI2";
             rr.parameters[3] = "Tuner";
             rr.parameters[4] = "CI";
-            rr.laststatus[0] = 4;
-            rr.laststatus[1] = 4;
-            rr.laststatus[2] = 4;
-            rr.laststatus[3] = 4;
-            rr.laststatus[4] = 4;
             rr.regexps[0] = "<ip value=\"\\d\">\\W+<lock value=\"(\\d+?)\">";
             rr.regexps[1] = "<asi1 value=\"\\d\">\\W+<lock value=\"(\\d+?)\">";
             rr.regexps[2] = "<asi2 value=\"\\d\">\\W+<lock value=\"(\\d+?)\">";
@@ -1001,11 +1165,13 @@ namespace PBIStatusReader
                     else
                         formobj.oldregexps[i] = reader.ReadToEnd();
                 }
+                formobj.isParamsForm = false;
                 setparamsform.Close();
             };
             okbtn.Location = new Point(textboxparams.Location.X + 10, textboxparams.Location.Y + textboxparams.Height + 20);
             Button cancelbtn = new Button();
             cancelbtn.Click += (s, e) => {
+                formobj.isParamsForm = false;
                 setparamsform.Close();
             };
             cancelbtn.Text = "Cancel";
@@ -1025,13 +1191,118 @@ namespace PBIStatusReader
         void param_Click(object sender, EventArgs e)
         {
             var cur = sender as Button;
+            if (formobj.isParamsForm)
+                return;
+            formobj.isParamsForm = true;
             SetParameters(Int32.Parse(cur.Name),true);
         }
 
         void regexps_Click(object sender, EventArgs e)
         {
             var cur = sender as Button;
+            if (formobj.isParamsForm)
+                return;
+            formobj.isParamsForm = true;
             SetParameters(Int32.Parse(cur.Name), false);
+        }
+
+        void setlogpatterns_Click(object sender, EventArgs e)
+        {
+            if (formobj.isFormatLogForm)
+                return;
+            formobj.isFormatLogForm = true;
+            // draw a small form that allows us to set new log formats
+            Form setlogformat = new Form();
+            setlogformat.Text = "Формат логов";
+            setlogformat.Size = new Size(900, 300);
+            setlogformat.TopMost = true;
+
+            Label hint = new Label();
+            hint.Width = 890;
+            hint.Height = 50;
+            hint.Font = new Font(hint.Font, FontStyle.Bold);
+
+            hint.Text = "Переменные подстановки:\r\n%timestamp% - дата и время, %devicename% - название устройства, %paramname% - имя параметра (не для всех логов),\r\n %url% - адрес для подключения, %msg% - подробности или системное сообщение, %regexp% - шаблон для поиска данных (не для всех логов)";
+            hint.Location = new Point(setlogformat.Location.X, setlogformat.Location.Y + 10);
+            setlogformat.Controls.Add(hint);
+            Label pattern1cap = new Label();
+            pattern1cap.Text = "Изменение состояния входов";
+            pattern1cap.Width = 270;
+            pattern1cap.Location = new Point(setlogformat.Location.X, setlogformat.Location.Y + 60);
+            setlogformat.Controls.Add(pattern1cap);
+            TextBox pattern1box = new TextBox();
+            pattern1box.Width = 600;
+            pattern1box.Location = new Point(pattern1cap.Location.X + 280, pattern1cap.Location.Y);
+            pattern1box.Text = ap.patternLogOK;
+            setlogformat.Controls.Add(pattern1box);
+
+            Label pattern2cap = new Label();
+            pattern2cap.Text = "Ошибки и проблемы с получением данных о входах";
+            pattern2cap.Width = 270;
+            pattern2cap.Location = new Point(pattern1cap.Location.X, pattern1cap.Location.Y + 30);
+            setlogformat.Controls.Add(pattern2cap);
+            TextBox pattern2box = new TextBox();
+            pattern2box.Width = 600;
+            pattern2box.Text = ap.patternLogConFail;
+            pattern2box.Location = new Point(pattern2cap.Location.X + 280, pattern2cap.Location.Y);
+            setlogformat.Controls.Add(pattern2box);
+
+            Label pattern3cap = new Label();
+            pattern3cap.Text = "Изменение активного входа";
+            pattern3cap.Width = 270;
+            pattern3cap.Location = new Point(pattern2cap.Location.X, pattern2cap.Location.Y + 30);
+            setlogformat.Controls.Add(pattern3cap);
+            TextBox pattern3box = new TextBox();
+            pattern3box.Width = 600;
+            pattern3box.Location = new Point(pattern3cap.Location.X + 280, pattern3cap.Location.Y);
+            pattern3box.Text = ap.patternDecoderOK;
+            setlogformat.Controls.Add(pattern3box);
+            Label pattern4cap = new Label();
+            pattern4cap.Text = "Ошибки и проблемы с подключением к странице декодера";
+            pattern4cap.Width = 270;
+            pattern4cap.Location = new Point(pattern3cap.Location.X, pattern3cap.Location.Y + 30);
+            setlogformat.Controls.Add(pattern4cap);
+            TextBox pattern4box = new TextBox();
+            pattern4box.Width = 600;
+            pattern4box.Text = ap.patternDecoderConFail;
+            pattern4box.Location = new Point(pattern4cap.Location.X + 280, pattern4cap.Location.Y);
+            setlogformat.Controls.Add(pattern4box);
+            Label pattern5cap = new Label();
+            pattern5cap.Text = "Общие ошибки соединения";
+            pattern5cap.Width = 270;
+            pattern5cap.Location = new Point(pattern4cap.Location.X, pattern4cap.Location.Y + 30);
+            setlogformat.Controls.Add(pattern5cap);
+            TextBox pattern5box = new TextBox();
+            pattern5box.Width = 600;
+            pattern5box.Text = ap.patternGeneralConFail;
+            pattern5box.Location = new Point(pattern5cap.Location.X + 280, pattern5cap.Location.Y);
+            setlogformat.Controls.Add(pattern5box);
+
+            Button okbtn = new Button();
+            okbtn.Text = "OK";
+            okbtn.Location = new Point(pattern5cap.Location.X, pattern5cap.Location.Y + 30);
+            okbtn.Click += (s, ee) =>
+                {
+                    // replace our patterns
+                    formobj.oldpatternLogOK = pattern1box.Text;
+                    formobj.oldpatternLogConFail = pattern2box.Text;
+                    formobj.oldpatternDecoderOK = pattern3box.Text;
+                    formobj.oldpatternDecoderConFail = pattern4box.Text;
+                    formobj.oldpatternGeneralConFail = pattern5box.Text;
+                    formobj.isFormatLogForm = false;
+                    setlogformat.Close();
+                };
+            Button cancelbtn = new Button();
+            cancelbtn.Text = "Cancel";
+            cancelbtn.Location = new Point(okbtn.Location.X + 80, okbtn.Location.Y);
+            cancelbtn.Click += (s, ee) =>
+                {
+                    formobj.isFormatLogForm = false;
+                    setlogformat.Close();
+                };
+            setlogformat.Controls.Add(okbtn);
+            setlogformat.Controls.Add(cancelbtn);
+            setlogformat.Show();
         }
 
         void updown_Changed(object sender, EventArgs e)
@@ -1039,6 +1310,7 @@ namespace PBIStatusReader
             
             int newvalue = (int)receivescnt.Value;
             int oldvalue = ap.n;
+            formobj.logger.oldsize = oldvalue;
             // изменилось количество ресиверов
             ap.n = newvalue;
             Resize(newvalue);
@@ -1106,6 +1378,7 @@ namespace PBIStatusReader
                     captionlogdir.Location = new Point(captionlogdir.Location.X, inform.Location.Y);
                     logmaindir.Location = new Point(logmaindir.Location.X, captionlogdir.Location.Y);
                     tnestedpath.Location = new Point(tnestedpath.Location.X, logmaindir.Location.Y);
+                    setlogpatterns.Location = new Point(setlogpatterns.Location.X, tnestedpath.Location.Y);
 
                     // создаем объект по умолчанию для нового ресивера
                     ReceiverRecord tempobj = new ReceiverRecord();
@@ -1189,6 +1462,7 @@ namespace PBIStatusReader
                 captionlogdir.Location = new Point(captionlogdir.Location.X, inform.Location.Y);
                 logmaindir.Location = new Point(logmaindir.Location.X, inform.Location.Y);
                 tnestedpath.Location = new Point(tnestedpath.Location.X, logmaindir.Location.Y);
+                setlogpatterns.Location = new Point(setlogpatterns.Location.X, tnestedpath.Location.Y);
                 //}
             }
         }
@@ -1433,7 +1707,8 @@ namespace PBIStatusReader
                         ap.receiverecs[i].parameters.RemoveAll(item => item == null); // при десериализации в поле параметров появляются лишние null, этот код их убирает
                         ap.receiverecs[i].regexps.RemoveAll(item => item == null);
                     }
-          
+
+                    formobj.logger.oldsize = ap.n;
                     // таймер запускается снова
                     formobj.timer1.Start();
                 };
@@ -1465,6 +1740,13 @@ namespace PBIStatusReader
             tnestedpath.Location = new Point(logmaindir.Location.X + 160, logmaindir.Location.Y);
             settingsform.Controls.Add(tnestedpath);
 
+            setlogpatterns = new Button();
+            setlogpatterns.Text = "Форматы логов";
+            setlogpatterns.Width = 140;
+            setlogpatterns.Location = new Point(tnestedpath.Location.X + 210, tnestedpath.Location.Y);
+            setlogpatterns.Click += new EventHandler(setlogpatterns_Click);
+            settingsform.Controls.Add(setlogpatterns);
+
             tperiod.Size = new Size(200, 20);
             tperiod.Location = new Point(inform.Location.X, inform.Location.Y + 20);
             settingsform.Controls.Add(tperiod);
@@ -1495,14 +1777,13 @@ namespace PBIStatusReader
             }
         }
 
-        // restore previous laststatus fields
+        // restore previous lastactiveinput fields
         public void RestoreOldLastStatusFields(setstruct oldap, setstruct newap)
         {
             for (int i = 0; i < newap.n; i++)
             {
                 for (int j = 0; j < newap.receiverecs[i].m; j++)
                 {
-                    newap.receiverecs[i].laststatus[j] = oldap.receiverecs[i].laststatus[j];
                     newap.receiverecs[i].lastactiveinput = oldap.receiverecs[i].lastactiveinput;
                 }
             }
@@ -1518,7 +1799,7 @@ namespace PBIStatusReader
                 ap = (setstruct)x.Deserialize(reader);
                 reader.Close();
                 reader.Dispose();
-                if (ap.receiverecs[0].laststatus[0] != 4)
+                if (!formobj.appstarted)
                 {
                     setstruct oldap = ap; // сделаем копию объекта, чтобы сохранить состояния последнего считывания
                     RestoreOldLastStatusFields(oldap, ap);
@@ -1622,12 +1903,25 @@ namespace PBIStatusReader
                 }
             }
 
+            // применяем настройки формата логов к структуре
+            // replace our patterns
+            ap.patternLogOK = formobj.oldpatternLogOK;
+            ap.patternLogConFail = formobj.oldpatternLogConFail;
+            ap.patternDecoderOK = formobj.oldpatternDecoderOK;
+            ap.patternDecoderConFail = formobj.oldpatternDecoderConFail;
+            ap.patternGeneralConFail = formobj.oldpatternGeneralConFail;
+
             formobj.isSettingsForm = false; // форма настроек закрыта
             ap.n = tempn;
 
             ApplySettingsToStruct();
             WriteSettings();
             settingsform.Close();
+			
+			// logger update
+            // обновляем данные для логгера
+            formobj.logger.setap(this);
+            formobj.logger.ResizeLoggers(ap.n);
 
             // timer 
             formobj.timer1.Interval = 1000*(int)ap.period;
