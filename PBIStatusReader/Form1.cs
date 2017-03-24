@@ -21,10 +21,8 @@ namespace PBIStatusReader
     {
         int n = 10; // число ресиверов
         settings ap;
-        public System.Windows.Forms.Timer timer1;
+        public System.Timers.Timer timer1;
         public System.Timers.Timer timermidnight;
-        public bool fwriting; // флаг-индикатор безусловной записи
-        public bool fwritingset; // флаг-индикатор безусловной записи смены входа
         public bool appstarted; // флаг-индикатор того, что программа запущена, но данные ещё не считывались
         Label[] recvnamelabels;
         PictureBox[,] pictureBoxes = new PictureBox[10,5];
@@ -56,9 +54,7 @@ namespace PBIStatusReader
             isSettingsForm = false;
             isParamsForm = false;
             isFormatLogForm = false;
-            fwriting = false;
-            fwritingset = false;
-            timer1 = new System.Windows.Forms.Timer();
+            timer1 = new System.Timers.Timer();
             timermidnight = new System.Timers.Timer();
             SetTimerMidnight();
             appstarted = true;
@@ -102,11 +98,12 @@ namespace PBIStatusReader
         public void MidNightScan()
         {
             // midnight - new day, we need to recreate log files
-			logger.reopenlogfiles();
-
-            fwriting = true;
-            fwritingset = true;
-            Task.Factory.StartNew(() => setValues(true)).ContinueWith(t => getSelectedInputs(true));
+            timer1.Stop();
+			logger.reopenlogfiles(); 
+            Task.Factory.StartNew(() => midnightsetValues()).ContinueWith(t => midnightgetSelectedInputs());
+            timer1.Interval = 1000 * (int)ap.ap.period;
+            Thread.Sleep(5000);
+            timer1.Start();
         }
 
         public void SetTimerMidnight()
@@ -121,6 +118,7 @@ namespace PBIStatusReader
             
             timermidnight.Elapsed += (sender, args) => {
                 MidNightScan();
+                Thread.Sleep(1000);
                 SetTimerMidnight();
             };
             timermidnight.Start();
@@ -246,7 +244,8 @@ namespace PBIStatusReader
             }
 
             timer1.Interval = 1000 * Convert.ToInt32(ap.ap.period);
-            timer1.Tick += new EventHandler(timer1_Tick);
+            timer1.AutoReset = true;
+            timer1.Elapsed += new System.Timers.ElapsedEventHandler(timer1_Tick);
             timer1.Enabled = true;
             this.Text += " Загрузка данных...";
         }
@@ -271,12 +270,7 @@ namespace PBIStatusReader
             // если форма настроек открыта
             if (isSettingsForm)
                 return;
-            // если уже выполняется процедура безусловной записи
-			if (fwriting)
-				return;
-			if (fwritingset)
-				return;
-            Task.Factory.StartNew(() => setValues(false)).ContinueWith(t => getSelectedInputs(false));
+            Task.Factory.StartNew(() => setValues()).ContinueWith(t => getSelectedInputs());
         }
 
         void timer1_Tick(object sender, EventArgs e)
@@ -303,20 +297,6 @@ namespace PBIStatusReader
             return recvnamelabels[id];
         }
 
-        public delegate void ChangeLabel(Label obj, string text);
-        public void Changelab(Label obj, string text)
-        {
-            if (this.InvokeRequired)
-            {
-                this.BeginInvoke(new ChangeLabel(Changelab), obj, text);
-            }
-            else
-            {
-                obj.Text = text;
-            }
-        }
-
-
         // status: 0 - параметр в состоянии Off, 1 - параметр в состоянии On, 2 - нет связи (не удалось получить)
         void setColorOfPictureBox(PictureBox tmp, int status)
         {
@@ -340,94 +320,145 @@ namespace PBIStatusReader
                 return "UNDEFINED";
         }
 
-        void getSelectedInput(int i, bool writingset)
+        // Get html code of web page, i - current device, type = 0 (values) or 1 (decoder page)
+        string getHtmlcode(int i, string tmpurl, int type)
         {
+            // authentification
+            TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
+            int secondsSinceEpoch = (int)t.TotalSeconds;
             HttpWebResponse resp = null;
             HttpWebRequest webRequest;
+            // webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(i) + "/cgi-bin/input_status.cgi?cur_time=" + secondsSinceEpoch.ToString());
             try
             {
-                webRequest = (HttpWebRequest)WebRequest.Create(ap.ap.receiverecs[i].urlinput);
+                webRequest = (HttpWebRequest)WebRequest.Create(tmpurl);
             }
             catch (System.UriFormatException e)
             {
-                logger.WriteToLog(4,i,0,e.Message);
-                return;
+                if (type == 0)
+                {
+                    MakeAllLightsYellow(i);
+                }
+                logger.WriteToLog(4, i, 0, e.Message);
+                return "";
             }
+
             webRequest.Method = "GET";
             webRequest.Timeout = 5000; // 5 секунд таймаут
             webRequest.Headers.Clear();
             byte[] authData = System.Text.Encoding.UTF8.GetBytes(ap.ap.receiverecs[i].login + ":" + ap.ap.receiverecs[i].pass);
             string authHeader = "Authorization: Basic " + Convert.ToBase64String(authData) + "\r\n";
             webRequest.Headers.Add(authHeader);
+            this.Text = "PBI Status Reader";
             try
             {
                 resp = (HttpWebResponse)webRequest.GetResponse();
-                if (HttpStatusCode.OK == resp.StatusCode)
+                if (HttpStatusCode.NotFound == resp.StatusCode)
+                {
+                    if (type == 0)
+                    {
+                        // not found
+                        if (type == 0)
+                        {
+                            MakeAllLightsYellow(i);
+                        }
+                        logger.WriteToLog(4, i, 0, resp.StatusCode + " " + resp.StatusDescription);
+                        return "";
+                    }
+                }
+                else if (HttpStatusCode.OK == resp.StatusCode)
                 {
                     Stream ReceiveStream = resp.GetResponseStream();
                     Encoding encode = System.Text.Encoding.GetEncoding("utf-8");
                     StreamReader readStream = new StreamReader(ReceiveStream, encode);
-                    String str = "";
-                    str = readStream.ReadToEnd();
-                    string pattern = @"<option value=""\d""\sselected>(.+?)\s</option>";
-                    Regex newReg = new Regex(pattern);
-                    Match matches = newReg.Match(str);
-                    if (matches.Groups[1].Success)
+                    String str = readStream.ReadToEnd();
+                    // если страница пустая, но коннект состоялся, лампочки будут жёлтыми
+                    if (str.Length == 0)
                     {
-                        //try to make actual input bold...
-                        string bolditem = matches.Groups[1].Value.Replace("Input", "");
-                        int keypos = -1;
-                        if (bolditem != "")
-                        {
-                            for (int j = 0; j < ap.ap.m; j++)
-                            {
-                                if (bolditem.IndexOf(ap.ap.receiverecs[i].parameters[j]) != -1)
-                                {
-                                    keypos = j;
-                                    // блок для безусловной записи по таймеру
-                                    if (writingset)
-                                    {
-                                        logger.WriteToLog(3, i, j, pattern);
-                                        ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j];
-                                        fwritingset = false;
-                                        return;
-                                    }
-
-                                    if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
-                                    {
-                                        // изменился
-                                        logger.WriteToLog(3, i, j, pattern);
-                                    }
-                                    ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
-                                    dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
-                                    break;
-                                }
-                            }
-                        }
+                        MakeAllLightsYellow(i);
+                        logger.WriteToLog(4, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
+                        return "";
                     }
-                    else
-                    {
-                        // шаблон не найден
-                        logger.WriteToLog(4, i, 0, "Шаблон поиска активного входа не найден");
-                    }
+                    return str;
                 }
-                if (HttpStatusCode.NotFound == resp.StatusCode)
-                {
-                    // not found
-                    logger.WriteToLog(4, i, 0, resp.StatusCode + " " + resp.StatusDescription);
-                }
+            }
+            catch (System.ArgumentOutOfRangeException e)
+            {
+                MessageBox.Show("ArgumentOutOfRangeException: " + e.Message);
+                return "";
             }
             catch (System.Net.WebException e)
             {
+                Console.WriteLine(e.Status.ToString() + " " + e.Message);
                 if (e.Status.ToString() == "RequestCanceled")
-                    return;
+                    return "";
                 if (e.Status.ToString() == "Timeout")
-                    return;
+                    return "";
                 logger.WriteToLog(4, i, 0, e.Status.ToString() + " " + e.Message);
             }
             catch (Exception e)
             {
+                if (type == 0)
+                {
+                    MakeAllLightsYellow(i);
+                }
+                // пишем в лог
                 logger.WriteToLog(4, i, 0, e.Message);
+                return "";
+            }
+            return "";
+        }
+
+        void getSelectedInput(int i, bool writeanyway)
+        {
+            String str = getHtmlcode(i, ap.ap.receiverecs[i].urlinput, 1);
+            if (str == "")
+            {
+                Console.WriteLine("Error with getting the html code of decoder page");
+                return;
+            }
+            string pattern = @"<option value=""\d""\sselected>(.+?)\s</option>";
+            Regex newReg = new Regex(pattern);
+            Match matches = newReg.Match(str);
+            if (matches.Groups[1].Success)
+            {
+                //try to make actual input bold...
+                string bolditem = matches.Groups[1].Value.Replace("Input", "");
+                int keypos = -1;
+                if (bolditem != "")
+                {
+                    for (int j = 0; j < ap.ap.m; j++)
+                    {
+                        if (bolditem.IndexOf(ap.ap.receiverecs[i].parameters[j]) != -1)
+                        {
+                            keypos = j;
+                            if (writeanyway)
+                            {
+                                if (ap.ap.writetofile)
+                                {
+                                    string tmpmsg = logger.CreateLogMsg(3, i, j, pattern);
+                                    logger.rawWrite(i, tmpmsg);
+                                    ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
+                                    dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
+                                    return;
+                                }
+                            }
+                            if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
+                            {
+                                // изменился
+                                logger.WriteToLog(3, i, j, pattern);
+                            }
+                            ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
+                            dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // шаблон не найден
+                logger.WriteToLog(4, i, 0, "Шаблон поиска активного входа не найден");
             }
         }
 		
@@ -449,151 +480,103 @@ namespace PBIStatusReader
 				setColorOfPictureBox(pictureBoxes[i, j], 2);
 			}
 		}
+
+        int analyzeHtmlInputs(string html, int i, int j)
+        {
+            //Console.WriteLine(j.ToString() + " " + ap.ap.receiverecs[i].m.ToString());
+            string pattern = ap.ap.receiverecs[i].regexps[j].ToString();
+            Regex newReg = new Regex(pattern);
+            Match matches = newReg.Match(html);
+
+            if (matches.Groups[1].Success) // шаблон найден
+            {
+                // параметр равен 1
+                if (matches.Groups[1].Value == "1")
+                {
+                    //Console.WriteLine(matches.Groups[1].Value);
+                    setColorOfPictureBox(pictureBoxes[i, j], 1);
+                    return 1;
+                }
+                // параметр не равен 1 но равен другому числу
+                else
+                {
+                    setColorOfPictureBox(pictureBoxes[i, j], 0);
+                    return 0;
+                }
+            }
+            else
+            {
+                // шаблон не найден
+                setColorOfPictureBox(pictureBoxes[i, j], 2);
+                logger.WriteToLog(0, i, j, "По шаблону для поиска параметров ничего не найдено. Возможно, он задан неверно.");
+                return 2;
+            }
+
+        }
 		
-		void setValue(int i, bool writing)
+		void setValue(int i, bool writeanyway)
 		{
-			TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
-			int secondsSinceEpoch = (int)t.TotalSeconds;
-			HttpWebResponse resp = null;
-			HttpWebRequest webRequest;
-			//webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(i) + "/cgi-bin/input_status.cgi?cur_time=" + secondsSinceEpoch.ToString());
-			try
-			{
-				webRequest = (HttpWebRequest)WebRequest.Create(geturlbyid(i));
-			}
-			catch (System.UriFormatException e)
-			{
-				MakeAllLightsYellow(i);
-                logger.WriteToLog(4, i, 0, e.Message);
-				return;
-			}
-			webRequest.Method = "GET";
-			webRequest.Timeout = 5000; // 5 секунд таймаут
-			webRequest.Headers.Clear();
-			byte[] authData = System.Text.Encoding.UTF8.GetBytes(ap.ap.receiverecs[i].login + ":" + ap.ap.receiverecs[i].pass);
-			string authHeader = "Authorization: Basic " + Convert.ToBase64String(authData) + "\r\n";
-			webRequest.Headers.Add(authHeader);
-			this.Text = "PBI Status Reader";
-            try
+			String str = getHtmlcode(i,geturlbyid(i),0);
+            if (str == "")
             {
-                resp = (HttpWebResponse)webRequest.GetResponse();
-                if (HttpStatusCode.NotFound == resp.StatusCode)
-                {
-                    // not found
-                    MakeAllLightsYellow(i);
-                    logger.WriteToLog(4, i, 0, resp.StatusCode + " " + resp.StatusDescription);
-                    return;
-                }
-                else if (HttpStatusCode.OK == resp.StatusCode)
-                {
-                    //Console.Write("Connection... OK");
-                    Changelab(getlabelbyid(i), ap.ap.receiverecs[i].name);
-                    Stream ReceiveStream = resp.GetResponseStream();
-                    Encoding encode = System.Text.Encoding.GetEncoding("utf-8");
-                    StreamReader readStream = new StreamReader(ReceiveStream, encode);
-                    String str = "";
-                    str = readStream.ReadToEnd();
-
-                    // если страница пустая, но коннект состоялся, лампочки будут жёлтыми
-                    if (str.Length == 0)
-                    {
-                        MakeAllLightsYellow(i);
-                        logger.WriteToLog(4, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
-                        return;
-                    }
-
-                    for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
-                    {
-                        //Console.WriteLine(j.ToString() + " " + ap.ap.receiverecs[i].m.ToString());
-                        string pattern = ap.ap.receiverecs[i].regexps[j].ToString();
-                        Regex newReg = new Regex(pattern);
-                        Match matches = newReg.Match(str);
-                        int currentstate = 0;
-                        if (matches.Groups[1].Success) // шаблон найден
-                        {
-                            // параметр равен 1
-                            if (matches.Groups[1].Value == "1")
-                            {
-                                //Console.WriteLine(matches.Groups[1].Value);
-                                setColorOfPictureBox(pictureBoxes[i, j], 1);
-                                currentstate = 1;
-                            }
-                            // параметр не равен 1 но равен другому числу
-                            else
-                            {
-                                setColorOfPictureBox(pictureBoxes[i, j], 0);
-                                currentstate = 0;
-                            }
-                        }
-                        else
-                        {
-                            // шаблон не найден
-                            setColorOfPictureBox(pictureBoxes[i, j], 2);
-                            currentstate = 2;
-                            logger.WriteToLog(0, i, j, "По шаблону для поиска параметров ничего не найдено. Возможно, он задан неверно.");
-                            continue;
-                        }
-                        if (ap.ap.writetofile == true)
-                        {
-                            // блок для безусловной записи в определенное время
-                            if (writing == true)
-                            {
-                                string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
-                                if (j>=ap.ap.receiverecs[i].m-1)
-                                {
-									if (i>=ap.ap.n) {
-										logger.rawWrite(i, "\r\n");
-										fwriting = false;
-									}
-									logger.rawWrite(i, tmpmsg);
-                                    return;
-                                }
-                                logger.rawWrite(i, tmpmsg);
-                                continue;
-                            }
-                            // блок для обычной записи
-                            else
-                            {
-                                string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
-                                // если состояние хоть одного параметра изменилось - пишем
-                                //if (ap.ap.receiverecs[i].lastlogmsg[j] != tmpmsg)
-                                logger.WriteToLog(1, i, j, intToStatus(currentstate));
-                            }
-                        }
-                        ap.ap.receiverecs[i].lastlogmsg[j] = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
-                    }
-                }
-            }
-            catch (System.ArgumentOutOfRangeException e)
-            {
-                MessageBox.Show("ArgumentOutOfRangeException: " + e.Message);
-            }
-            catch (Exception e)
-            {
-
-                MakeAllLightsYellow(i);
-                // пишем в лог
-                logger.WriteToLog(4, i, 0, e.Message);
+                Console.WriteLine("Error with getting the html code of parameters");
                 return;
+            }
+            for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+            {
+                int currentstate = analyzeHtmlInputs(str, i, j);
+                if (ap.ap.writetofile)
+                {
+                    string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
+                    if (writeanyway)
+                    {
+                        // безусловная запись
+                        logger.rawWrite(i, tmpmsg);
+                        ap.ap.receiverecs[i].lastlogmsg[j] = intToStatus(currentstate);
+                        continue;
+                    }
+                    // если состояние хоть одного параметра изменилось - пишем
+                    if (ap.ap.receiverecs[i].lastlogmsg[j] != intToStatus(currentstate))
+                    {
+                        logger.WriteToLog(1, i, j, intToStatus(currentstate));
+                    }
+                    // запоминаем полученное состояние
+                    ap.ap.receiverecs[i].lastlogmsg[j] = intToStatus(currentstate);
+                }
             }
 		}
 
-        void setValues(object writing)
+        void midnightsetValues()
         {
-			bool canwewrite = (bool)writing;
-			makeregulardynamiclabels();
+            for (int i = 0; i < ap.ap.n; i++)
+            {
+                setValue(i, true);
+            }
+        }
+
+        void midnightgetSelectedInputs()
+        {
+            makeregulardynamiclabels();
+            for (int i = 0; i < ap.ap.n; i++)
+            {
+                getSelectedInput(i, true);
+            }
+        }
+
+        void setValues()
+        {
 			for (int i = 0; i<ap.ap.n; i++)
 			{
-				setValue(i,canwewrite);
+				setValue(i, false);
 			}
         }
 		
-		void getSelectedInputs(object writingset)
+		void getSelectedInputs()
 		{
-			bool canwewrite = (bool)writingset;
+            makeregulardynamiclabels();
 			for (int i = 0; i<ap.ap.n; i++)
 			{
-				getSelectedInput(i,canwewrite);
+				getSelectedInput(i, false);
 			}
 		}
 
@@ -628,7 +611,8 @@ namespace PBIStatusReader
         {
             if ((e.Control && e.KeyCode == Keys.C))
             {
-                MessageBox.Show("fwriting = " + fwriting.ToString() + ", fwritingset = " + fwritingset.ToString() + ", timer1 is " + timer1.Enabled.ToString() + "\r\n" + "timer1 inteval = " + timer1.Interval);
+                MessageBox.Show("timer1 is " + timer1.Enabled.ToString() + "\r\n" + "timer1 inteval = " + timer1.Interval + "\n"
+                    + "timermidnight is" + timermidnight.Enabled.ToString());
             }
         }
     }
