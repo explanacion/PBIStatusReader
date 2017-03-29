@@ -109,11 +109,12 @@ namespace PBIStatusReader
         public void SetTimerMidnight()
         {
             DateTime nowTime = DateTime.Now;
-            DateTime time = new DateTime(nowTime.Year, nowTime.Month, nowTime.Day, 0, 0, 0, 0);
-            if (nowTime > time)
+            DateTime time = DateTime.Today;
+            if (nowTime.Day == time.Day)
                 time = time.AddDays(1);
-            var span = time - DateTime.Now;
-            timermidnight.Interval = span.TotalMilliseconds;
+            var span = time - nowTime;
+            //MessageBox.Show(span.TotalHours.ToString());
+            timermidnight.Interval = span.TotalMilliseconds + 5000; // +5 secs
             timermidnight.AutoReset = false;
             
             timermidnight.Elapsed += (sender, args) => {
@@ -611,8 +612,8 @@ namespace PBIStatusReader
         {
             if ((e.Control && e.KeyCode == Keys.C))
             {
-                MessageBox.Show("timer1 is " + timer1.Enabled.ToString() + "\r\n" + "timer1 inteval = " + timer1.Interval + "\n"
-                    + "timermidnight is" + timermidnight.Enabled.ToString());
+                MessageBox.Show("timer1 is " + timer1.Enabled.ToString() + "\r\n" + "timer1 inteval = " + timer1.Interval.ToString() + "\n"
+                    + "timermidnight is " + timermidnight.Enabled.ToString() + "\r\ntimermidnight interval = " + timermidnight.Interval.ToString() + " (" + (timermidnight.Interval / 1000 / 3600) + ")" + "\n" + DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss"));
             }
         }
     }
