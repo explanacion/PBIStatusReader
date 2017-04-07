@@ -50,6 +50,7 @@ namespace PBIStatusReader
         {
             ap = new settings(this); // инициализация настроек приложения
             InitializeComponent();
+
             bool ifread = ap.ReadSettings(); // считываем записанные ранее настройки
             isSettingsForm = false;
             isParamsForm = false;
@@ -526,23 +527,26 @@ namespace PBIStatusReader
             for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
             {
                 int currentstate = analyzeHtmlInputs(str, i, j);
+				
                 if (ap.ap.writetofile)
                 {
                     string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
+                    // trim first two tokens (current datestamp) from the last message market
+					string templastmessage = string.Join("\t",tmpmsg.Split(new char[] { '\t' }).Skip(2).ToArray());
                     if (writeanyway)
                     {
                         // безусловная запись
                         logger.rawWrite(i, tmpmsg);
-                        ap.ap.receiverecs[i].lastlogmsg[j] = intToStatus(currentstate);
+                        ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                         continue;
                     }
                     // если состояние хоть одного параметра изменилось - пишем
-                    if (ap.ap.receiverecs[i].lastlogmsg[j] != intToStatus(currentstate))
+                    if (ap.ap.receiverecs[i].lastlogmsg[j] != templastmessage)
                     {
                         logger.WriteToLog(1, i, j, intToStatus(currentstate));
                     }
                     // запоминаем полученное состояние
-                    ap.ap.receiverecs[i].lastlogmsg[j] = intToStatus(currentstate);
+                    ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                 }
             }
 		}
