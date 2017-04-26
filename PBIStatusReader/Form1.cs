@@ -56,7 +56,13 @@ namespace PBIStatusReader
             isParamsForm = false;
             isFormatLogForm = false;
             timer1 = new System.Timers.Timer();
+            timer1.Elapsed += new System.Timers.ElapsedEventHandler(timer1_Tick);
             timermidnight = new System.Timers.Timer();
+			timermidnight.AutoReset = false;
+            timermidnight.Elapsed += (sender, args) =>
+            {
+                MidNightScan();
+            };
             SetTimerMidnight();
             appstarted = true;
             if (!ifread)
@@ -99,30 +105,27 @@ namespace PBIStatusReader
         public void MidNightScan()
         {
             // midnight - new day, we need to recreate log files
-            timer1.Stop();
+            timer1.Stop(); // don't check the data for a while
 			logger.reopenlogfiles(); 
             Task.Factory.StartNew(() => midnightsetValues()).ContinueWith(t => midnightgetSelectedInputs());
             timer1.Interval = 1000 * (int)ap.ap.period;
             Thread.Sleep(5000);
             timer1.Start();
+			SetTimerMidnight();
         }
 
         public void SetTimerMidnight()
         {
-            DateTime nowTime = DateTime.Now;
-            DateTime time = DateTime.Today;
+			timermidnight.Stop();
+            DateTime nowTime = DateTime.Now; // e.g. 21.04.2017 20:53:27
+            DateTime time = DateTime.Today; // e.g. 21.04.2017 00:00:00
             if (nowTime.Day == time.Day)
                 time = time.AddDays(1);
-            var span = time - nowTime;
+            var span = time - nowTime; // how many milliseconds till the next midnight
             //MessageBox.Show(span.TotalHours.ToString());
             timermidnight.Interval = span.TotalMilliseconds + 5000; // +5 secs
             timermidnight.AutoReset = false;
-            
-            timermidnight.Elapsed += (sender, args) => {
-                MidNightScan();
-                Thread.Sleep(1000);
-                SetTimerMidnight();
-            };
+
             timermidnight.Start();
         }
 
@@ -137,7 +140,7 @@ namespace PBIStatusReader
         public void ClearAllMainControls()
         {
             this.Controls.Clear();
-            this.InitializeComponent();
+            //this.InitializeComponent(); // этот метод не нужно вызывать вне конструктора, иначе он повторно создает обработчики событий
         }
 
         public bool PictboxExists(int i, int j)
@@ -247,7 +250,6 @@ namespace PBIStatusReader
 
             timer1.Interval = 1000 * Convert.ToInt32(ap.ap.period);
             timer1.AutoReset = true;
-            timer1.Elapsed += new System.Timers.ElapsedEventHandler(timer1_Tick);
             timer1.Enabled = true;
             this.Text += " Загрузка данных...";
         }
@@ -339,9 +341,15 @@ namespace PBIStatusReader
             {
                 if (type == 0)
                 {
+                    // status page
                     MakeAllLightsYellow(i);
+                    logger.WriteToLog(0, i, 0, e.Message);
                 }
-                logger.WriteToLog(4, i, 0, e.Message);
+                else if (type == 1)
+                {
+                    // decoder page
+                    logger.WriteToLog(2, i, 0, e.Message);
+                }
                 return "";
             }
 
@@ -363,8 +371,12 @@ namespace PBIStatusReader
                         if (type == 0)
                         {
                             MakeAllLightsYellow(i);
+                            logger.WriteToLog(0, i, 0, resp.StatusCode + " " + resp.StatusDescription);
                         }
-                        logger.WriteToLog(4, i, 0, resp.StatusCode + " " + resp.StatusDescription);
+                        else
+                        {
+                            logger.WriteToLog(2, i, 0, resp.StatusCode + " " + resp.StatusDescription);
+                        }
                         return "";
                     }
                 }
@@ -378,7 +390,14 @@ namespace PBIStatusReader
                     if (str.Length == 0)
                     {
                         MakeAllLightsYellow(i);
-                        logger.WriteToLog(4, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
+                        if (type == 0)
+                        {
+                            logger.WriteToLog(0, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
+                        }
+                        else if (type == 1)
+                        {
+                            logger.WriteToLog(2, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
+                        }
                         return "";
                     }
                     return str;
@@ -396,7 +415,17 @@ namespace PBIStatusReader
                     return "";
                 if (e.Status.ToString() == "Timeout")
                     return "";
-                logger.WriteToLog(4, i, 0, e.Status.ToString() + " " + e.Message);
+                if (type == 0)
+                {
+                    // status page
+                    logger.WriteToLog(0, i, 0, e.Status.ToString() + " " + e.Message);
+                }
+                else if (type == 1)
+                {
+                    // decoder page
+                    logger.WriteToLog(2, i, 0, e.Status.ToString() + " " + e.Message);
+                }
+                
             }
             catch (Exception e)
             {
@@ -460,7 +489,7 @@ namespace PBIStatusReader
             else
             {
                 // шаблон не найден
-                logger.WriteToLog(4, i, 0, "Шаблон поиска активного входа не найден");
+                logger.WriteToLog(2, i, 0, "Шаблон поиска активного входа не найден");
             }
         }
 		
@@ -533,10 +562,11 @@ namespace PBIStatusReader
                     string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
                     // trim first two tokens (current datestamp) from the last message market
 					string templastmessage = string.Join("\t",tmpmsg.Split(new char[] { '\t' }).Skip(2).ToArray());
+
                     if (writeanyway)
                     {
                         // безусловная запись
-                        logger.rawWrite(i, tmpmsg);
+                        logger.rawWrite(i, tmpmsg + " midnight record ");
                         ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                         continue;
                     }
@@ -617,7 +647,9 @@ namespace PBIStatusReader
             if ((e.Control && e.KeyCode == Keys.C))
             {
                 MessageBox.Show("timer1 is " + timer1.Enabled.ToString() + "\r\n" + "timer1 inteval = " + timer1.Interval.ToString() + "\n"
-                    + "timermidnight is " + timermidnight.Enabled.ToString() + "\r\ntimermidnight interval = " + timermidnight.Interval.ToString() + " (" + (timermidnight.Interval / 1000 / 3600) + ")" + "\n" + DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss"));
+                    + "timermidnight is " + timermidnight.Enabled.ToString() + "\r\ntimermidnight interval = " + timermidnight.Interval.ToString() + " (" + (timermidnight.Interval / 1000 / 3600) + ")" + "\n" + DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss") + "\n"
+                    + "ap.ap.receiverecs[0].lastlogmsg[0] = " + ap.ap.receiverecs[0].lastlogmsg[0]
+                    );
             }
         }
     }
@@ -627,7 +659,7 @@ namespace PBIStatusReader
         string filepath;
         settings apobj;
         int currentIndex;
-        IDictionary<int, int> connectionfailcnt = new Dictionary<int, int>();
+        IDictionary<int, int> connectionfailcnt;
         System.Collections.Generic.Dictionary<int,string>[] lastlogmsg; // буфер для хранения последних сообщений
         System.Collections.Generic.Dictionary<int, string>[] lastlogdecodermsg; // буфер для хранения последних сообщений декодера
         StreamWriter[] logwriters;
@@ -641,6 +673,7 @@ namespace PBIStatusReader
             if (!Directory.Exists(filepath))
                 Directory.CreateDirectory(filepath);
             logwriters = new StreamWriter[apobj.ap.maxn];
+			connectionfailcnt = new Dictionary<int, int>();
             lastlogmsg = new Dictionary<int, string>[apobj.ap.maxn];
             lastlogdecodermsg = new Dictionary<int, string>[apobj.ap.maxn];
             for (int i = 0; i < apobj.ap.n; i++)
@@ -648,6 +681,7 @@ namespace PBIStatusReader
                 if (!Directory.Exists(Path.GetDirectoryName(getLogPath(i))))
                     Directory.CreateDirectory(Path.GetDirectoryName(getLogPath(i)));
                 logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
+				connectionfailcnt[i] = 0;
                 lastlogmsg[i] = new Dictionary<int, string>();
                 lastlogdecodermsg[i] = new Dictionary<int, string>();
                 unsetLastLogMsgs(i, apobj);
@@ -660,6 +694,10 @@ namespace PBIStatusReader
             {
                 logwriters[i].Close();
                 unsetLastLogMsgs(i, apobj);
+
+                connectionfailcnt[i] = 0; // сбрасываем счетчики неудачных подключений, потому что новый день - новый лог
+                apobj.ap.receiverecs[i].counter = 0;
+
 				//Console.WriteLine(getLogPath(i));
                 logwriters[i] = new StreamWriter(getLogPath(i), true, Encoding.UTF8);
             }
@@ -684,16 +722,32 @@ namespace PBIStatusReader
             }
         }
 		
-		public bool incrementCnt(int i)
+        // type - тип счетчика: 0 - общий, 1 - декодера
+		public bool incrementCnt(int type, int i)
 		{
-			// счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
-			apobj.ap.receiverecs[i].counter = (apobj.ap.receiverecs[i].counter + 1) % apobj.ap.logconnectlimit;
-            // Console.WriteLine(i.ToString() + " trigger " + apobj.ap.receiverecs[i].counter.ToString());
-			if (apobj.ap.receiverecs[i].counter >= apobj.ap.logconnectlimit - 1)
-			{
-				return true;
-			}
-			return false;
+            if (type == 0)
+            {
+                // счетчик циклический, меняется в диапазоне от 0 до ap.ap.logconnectlimit - 1
+                apobj.ap.receiverecs[i].counter = (apobj.ap.receiverecs[i].counter + 1) % apobj.ap.logconnectlimit;
+                // Console.WriteLine(i.ToString() + " trigger " + apobj.ap.receiverecs[i].counter.ToString());
+
+                if (apobj.ap.receiverecs[i].counter >= apobj.ap.logconnectlimit - 1)
+                {
+                    return true;
+                }
+                return false;
+            }
+            else
+            {
+                // счетчик декодера
+                connectionfailcnt[i] = (connectionfailcnt[i] + 1) % apobj.ap.logconnectlimit;
+
+                if (connectionfailcnt[i] >= apobj.ap.logconnectlimit - 1)
+                {
+                    return true;
+                }
+                return false;
+            }
 		}
 
         private void unsetLastLogMsgs(int i, settings ap)
@@ -832,12 +886,20 @@ namespace PBIStatusReader
             //MessageBox.Show(i.ToString() + " " + j.ToString());
             if (!apobj.ap.writetofile)
                 return;
-			if (type == 4) {
-				// general connection error
-                //Console.WriteLine(i.ToString() + " " + apobj.ap.receiverecs[i].counter.ToString());
-				if (!incrementCnt(i))
-					return;
-			}
+
+            int ttype = -1; 
+            if (type == 0)
+            {
+                ttype = 0; // тип ошибки соединения - основная страница
+            }
+			if (type == 2) {
+                ttype = 1; // тип ошибки соединения - страница декодера
+            }
+            if (ttype != -1)
+            {
+                if (!incrementCnt(ttype, i))
+                    return;
+            }
             string tofile = CreateLogMsg(type, i, j, msg);
             if (!isNewLastMsg(i,j,msg))
                 return;
@@ -1024,6 +1086,8 @@ namespace PBIStatusReader
         CheckBox tnestedpath;
         Button setlogpatterns;
         Label inform;
+		Label lconnfaillimit;
+		NumericUpDown tconnfaillimit;
         NumericUpDown tperiod;
         Button okbutton;
         Button cancelbutton;
@@ -1257,7 +1321,7 @@ namespace PBIStatusReader
             pattern4box.Location = new Point(pattern4cap.Location.X + 280, pattern4cap.Location.Y);
             setlogformat.Controls.Add(pattern4box);
             Label pattern5cap = new Label();
-            pattern5cap.Text = "Общие ошибки соединения";
+            pattern5cap.Text = "Другие ошибки";
             pattern5cap.Width = 270;
             pattern5cap.Location = new Point(pattern4cap.Location.X, pattern4cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern5cap);
@@ -1360,11 +1424,13 @@ namespace PBIStatusReader
 
                     // двигаем нижние контролы вниз, не выходя за границы
                     twritetofile.Location = new Point(tnames[i].Location.X, tnames[i].Location.Y + 30);
-                    inform.Location = new Point(inform.Location.X, twritetofile.Location.Y + tempstep); ;
+					lconnfaillimit.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 50);
+					tconnfaillimit.Location = new Point(tconnfaillimit.Location.X, lconnfaillimit.Location.Y);
+                    inform.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 70);
                     tperiod.Location = new Point(tperiod.Location.X, inform.Location.Y + tempstep);
                     okbutton.Location = new Point(okbutton.Location.X, tperiod.Location.Y + tempstep);
                     cancelbutton.Location = new Point(cancelbutton.Location.X, okbutton.Location.Y);
-                    captionlogdir.Location = new Point(captionlogdir.Location.X, inform.Location.Y);
+                    captionlogdir.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 25);
                     logmaindir.Location = new Point(logmaindir.Location.X, captionlogdir.Location.Y);
                     tnestedpath.Location = new Point(tnestedpath.Location.X, logmaindir.Location.Y);
                     setlogpatterns.Location = new Point(setlogpatterns.Location.X, tnestedpath.Location.Y);
@@ -1444,12 +1510,14 @@ namespace PBIStatusReader
                 //{
                 // поднимаем нижние контролы на фиксированный шаг вверх, не выходя за границы
                 twritetofile.Location = new Point(tnames[newvalue - 1].Location.X, tnames[newvalue - 1].Location.Y + 30);
-                inform.Location = new Point(inform.Location.X, twritetofile.Location.Y + tempstep);
+				lconnfaillimit.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 50);
+				tconnfaillimit.Location = new Point(tconnfaillimit.Location.X, lconnfaillimit.Location.Y);
+                inform.Location = new Point(inform.Location.X, twritetofile.Location.Y + 70);
                 tperiod.Location = new Point(tperiod.Location.X, inform.Location.Y + tempstep);
                 okbutton.Location = new Point(okbutton.Location.X, tperiod.Location.Y + tempstep);
                 cancelbutton.Location = new Point(cancelbutton.Location.X, okbutton.Location.Y);
-                captionlogdir.Location = new Point(captionlogdir.Location.X, inform.Location.Y);
-                logmaindir.Location = new Point(logmaindir.Location.X, inform.Location.Y);
+                captionlogdir.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 25);
+                logmaindir.Location = new Point(captionlogdir.Location.X + 130, captionlogdir.Location.Y);
                 tnestedpath.Location = new Point(tnestedpath.Location.X, logmaindir.Location.Y);
                 setlogpatterns.Location = new Point(setlogpatterns.Location.X, tnestedpath.Location.Y);
                 //}
@@ -1669,17 +1737,21 @@ namespace PBIStatusReader
 
             twritetofile = new CheckBox(); // чекбокс ведение журнала?
             inform = new Label(); // лейбл периодичность опроса ресивера
+			lconnfaillimit = new Label(); // лейбл порога записи лога при перебоях сети
+			tconnfaillimit = new NumericUpDown(); // порог для записи лога при неудачном соединении
+			tconnfaillimit.Minimum = 1;
+			tconnfaillimit.Maximum = 99999;
             tperiod = new NumericUpDown(); // периодичность
             tperiod.Minimum = 1;
             tperiod.Maximum = 99999;
             settingsform.Text = "Program Settings";
             
-            settingsform.Size = new System.Drawing.Size(990, 600);
+            settingsform.Size = new System.Drawing.Size(990, 620);
             
             okbutton = new Button();
             okbutton.Text = "OK";
             okbutton.Click += new EventHandler(okbutton_Click);
-            okbutton.Location = new Point(turls[ap.n-1].Location.X - 40, turls[ap.n-1].Location.Y + 90);
+            okbutton.Location = new Point(turls[ap.n-1].Location.X - 40, turls[ap.n-1].Location.Y + 130);
             settingsform.Controls.Add(okbutton);
 
             cancelbutton = new Button();
@@ -1705,16 +1777,24 @@ namespace PBIStatusReader
             settingsform.Controls.Add(cancelbutton);
 
             twritetofile.Size = new Size(200, 20);
-            twritetofile.Text = "Ведение журналов показаний";
+            twritetofile.Text = "Ведение логов";
             twritetofile.Location = new Point(tnames[ap.n-1].Location.X, tnames[ap.n-1].Location.Y + 20);
             settingsform.Controls.Add(twritetofile);
             inform.Size = new Size(300, 20);
             inform.Text = "Периодичность опроса ресивера, сек.";
-            inform.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 20);
+            inform.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 70);
+			
+			lconnfaillimit.Size = new Size(350,20);
+			lconnfaillimit.Text = "При проблемах с соединением писать в лог после X попыток";
+			lconnfaillimit.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 50);
+			tconnfaillimit.Size = new Size(40,20);
+			tconnfaillimit.Location = new Point(lconnfaillimit.Location.X + 350, lconnfaillimit.Location.Y);
             settingsform.Controls.Add(inform);
+			settingsform.Controls.Add(lconnfaillimit);
+			settingsform.Controls.Add(tconnfaillimit);
 
             captionlogdir = new Label();
-            captionlogdir.Location = new Point(inform.Location.X + 300, inform.Location.Y);
+            captionlogdir.Location = new Point(twritetofile.Location.X, twritetofile.Location.Y + 25);
             captionlogdir.Text = "Директория для логов";
             captionlogdir.Width = 130;
             settingsform.Controls.Add(captionlogdir);
@@ -1821,6 +1901,7 @@ namespace PBIStatusReader
             tnestedpath.Checked = ap.nestedpath;
             twritetofile.Checked = ap.writetofile;
             tperiod.Value = ap.period;
+            tconnfaillimit.Value = ap.logconnectlimit;
         }
 
         // update the struct after changing the settings via controls
@@ -1836,6 +1917,7 @@ namespace PBIStatusReader
             }
             ap.writetofile = twritetofile.Checked;
             ap.period = Convert.ToUInt32(tperiod.Value);
+            ap.logconnectlimit = Convert.ToInt32(tconnfaillimit.Value);
             ap.mainlogpath = logmaindir.Text;
             ap.nestedpath = tnestedpath.Checked;
             ap.formwidth = Convert.ToUInt32(width.Value);
