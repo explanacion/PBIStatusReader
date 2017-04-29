@@ -348,6 +348,7 @@ namespace PBIStatusReader
                 else if (type == 1)
                 {
                     // decoder page
+                    ap.ap.receiverecs[i].lastactiveinput = "NoConnect";
                     logger.WriteToLog(2, i, 0, e.Message);
                 }
                 return "";
@@ -446,6 +447,7 @@ namespace PBIStatusReader
             if (str == "")
             {
                 Console.WriteLine("Error with getting the html code of decoder page");
+                ap.ap.receiverecs[i].lastactiveinput = "EmptyPage";
                 return;
             }
             string pattern = @"<option value=""\d""\sselected>(.+?)\s</option>";
@@ -490,6 +492,7 @@ namespace PBIStatusReader
             {
                 // шаблон не найден
                 logger.WriteToLog(2, i, 0, "Шаблон поиска активного входа не найден");
+                ap.ap.receiverecs[i].lastactiveinput = "PatternError";
             }
         }
 		
