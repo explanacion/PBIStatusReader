@@ -324,6 +324,14 @@ namespace PBIStatusReader
                 return "UNDEFINED";
         }
 
+        void setLastMsgs(int i, string msg)
+        {
+            for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+            {
+                ap.ap.receiverecs[i].lastlogmsg[j] = msg;
+            }
+        }
+
         // Get html code of web page, i - current device, type = 0 (values) or 1 (decoder page)
         string getHtmlcode(int i, string tmpurl, int type)
         {
@@ -343,6 +351,7 @@ namespace PBIStatusReader
                 {
                     // status page
                     MakeAllLightsYellow(i);
+					ap.ap.receiverecs[i].lastactiveinput = "NoConnect";
                     logger.WriteToLog(0, i, 0, e.Message);
                 }
                 else if (type == 1)
@@ -411,7 +420,7 @@ namespace PBIStatusReader
             }
             catch (System.Net.WebException e)
             {
-                Console.WriteLine(e.Status.ToString() + " " + e.Message);
+                //Console.WriteLine(e.Status.ToString() + " " + e.Message);
                 if (e.Status.ToString() == "RequestCanceled")
                     return "";
                 if (e.Status.ToString() == "Timeout")
@@ -420,6 +429,7 @@ namespace PBIStatusReader
                 {
                     // status page
                     logger.WriteToLog(0, i, 0, e.Status.ToString() + " " + e.Message);
+                    setLastMsgs(i, "WebException");
                 }
                 else if (type == 1)
                 {
@@ -433,6 +443,7 @@ namespace PBIStatusReader
                 if (type == 0)
                 {
                     MakeAllLightsYellow(i);
+                    setLastMsgs(i, "Exception");
                 }
                 // пишем в лог
                 logger.WriteToLog(4, i, 0, e.Message);
@@ -565,7 +576,7 @@ namespace PBIStatusReader
                     string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
                     // trim first two tokens (current datestamp) from the last message market
 					string templastmessage = string.Join("\t",tmpmsg.Split(new char[] { '\t' }).Skip(2).ToArray());
-
+					//Console.WriteLine("templastmessage = " + templastmessage);
                     if (writeanyway)
                     {
                         // безусловная запись
@@ -575,11 +586,11 @@ namespace PBIStatusReader
                     }
                     // если состояние хоть одного параметра изменилось - пишем
                     if (ap.ap.receiverecs[i].lastlogmsg[j] != templastmessage)
-                    {
-                        logger.WriteToLog(1, i, j, intToStatus(currentstate));
+                    {	
+                        logger.WriteToLog(1, i, j, templastmessage);
+						// запоминаем полученное состояние
+						ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                     }
-                    // запоминаем полученное состояние
-                    ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                 }
             }
 		}
