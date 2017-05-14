@@ -420,11 +420,15 @@ namespace PBIStatusReader
             }
             catch (System.Net.WebException e)
             {
-                //Console.WriteLine(e.Status.ToString() + " " + e.Message);
+                Console.WriteLine(e.Status.ToString() + " " + e.Message);
                 if (e.Status.ToString() == "RequestCanceled")
                     return "";
                 if (e.Status.ToString() == "Timeout")
+                {
+                    logger.WriteToLog(0, i, 0, e.Status.ToString() + " " + e.Message);
+                    setLastMsgs(i, "Timeout");
                     return "";
+                }
                 if (type == 0)
                 {
                     // status page
@@ -440,6 +444,7 @@ namespace PBIStatusReader
             }
             catch (Exception e)
             {
+                Console.WriteLine(e.Source.ToString() + " " + e.Message);
                 if (type == 0)
                 {
                     MakeAllLightsYellow(i);
