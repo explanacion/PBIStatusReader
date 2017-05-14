@@ -332,6 +332,15 @@ namespace PBIStatusReader
             }
         }
 
+        int getTypeLogStatus(int type)
+        {
+            if (type == 0)
+                return 0;
+            else if (type == 1)
+                return 2;
+            return -1;
+        }
+
         // Get html code of web page, i - current device, type = 0 (values) or 1 (decoder page)
         string getHtmlcode(int i, string tmpurl, int type)
         {
@@ -400,14 +409,7 @@ namespace PBIStatusReader
                     if (str.Length == 0)
                     {
                         MakeAllLightsYellow(i);
-                        if (type == 0)
-                        {
-                            logger.WriteToLog(0, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
-                        }
-                        else if (type == 1)
-                        {
-                            logger.WriteToLog(2, i, 0, "Пустая страница. Возможно, произошло зависание устройства");
-                        }
+                        logger.WriteToLog(getTypeLogStatus(type), i, 0, "Пустая страница. Возможно, произошло зависание устройства");
                         return "";
                     }
                     return str;
@@ -425,14 +427,14 @@ namespace PBIStatusReader
                     return "";
                 if (e.Status.ToString() == "Timeout")
                 {
-                    logger.WriteToLog(0, i, 0, e.Status.ToString() + " " + e.Message);
+                    logger.WriteToLog(getTypeLogStatus(type), i, 0, e.Message);
                     setLastMsgs(i, "Timeout");
                     return "";
                 }
                 if (type == 0)
                 {
                     // status page
-                    logger.WriteToLog(0, i, 0, e.Status.ToString() + " " + e.Message);
+                    logger.WriteToLog(0, i, 0, e.Message);
                     setLastMsgs(i, "WebException");
                 }
                 else if (type == 1)
@@ -591,8 +593,8 @@ namespace PBIStatusReader
                     }
                     // если состояние хоть одного параметра изменилось - пишем
                     if (ap.ap.receiverecs[i].lastlogmsg[j] != templastmessage)
-                    {	
-                        logger.WriteToLog(1, i, j, templastmessage);
+                    {
+                        logger.WriteToLog(1, i, j, intToStatus(currentstate));
 						// запоминаем полученное состояние
 						ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                     }
