@@ -924,7 +924,8 @@ namespace PBIStatusReader
             string tofile = CreateLogMsg(type, i, j, msg);
             if (!isNewLastMsg(i,j,msg))
                 return;
-            SetLastMsg(type, i, j, tofile);
+            string skipped = string.Join("\t",tofile.Split(new char[] { '\t' }).Skip(2).ToArray());
+            SetLastMsg(type, i, j, skipped);
             rawWrite(i, tofile);
         }
 
