@@ -41,6 +41,8 @@ namespace PBIStatusReader
         public string oldpatternDecoderOK = "%timestamp%\t%devicename%\tDECODER\t%paramname%\tSET\t%url%\t%msg%";
         public string oldpatternDecoderConFail = "%timestamp%\t%devicename%\tDECODER\tURL\tERROR\t%url%\t%msg%";
         public string oldpatternGeneralConFail = "%timestamp%\t%devicename%\tCONNECTION\tERROR\t%url%\t%msg%";
+        public string oldpatternPaused = "%timestamp%\tPAUSED";
+        public string oldpatternResumed = "%timestamp%\tRESUMED";
 		
 		// мьютекс для файлов
 		static ReaderWriterLock locker = new ReaderWriterLock();
@@ -89,6 +91,10 @@ namespace PBIStatusReader
                 ap.ap.patternDecoderConFail = oldpatternDecoderConFail;
             if (ap.ap.patternGeneralConFail == null)
                 ap.ap.patternGeneralConFail = oldpatternGeneralConFail;
+            if (ap.ap.patternPaused == null)
+                ap.ap.patternPaused = oldpatternPaused;
+            if (ap.ap.patternResumed == null)
+                ap.ap.patternResumed = oldpatternResumed;
             logger = new LogManager(ap);
             for (int i = 0; i < ap.ap.n; i++)
             {
@@ -577,7 +583,11 @@ namespace PBIStatusReader
             for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
             {
                 int currentstate = analyzeHtmlInputs(str, i, j);
-				
+
+                // temp logging
+                File.AppendAllText("D:\\PBI_IP-T2_STATUS_Reader\\diagnostics.txt", logger.getTimeStamp() + " name: " + ap.ap.receiverecs[i].name + " param: " + ap.ap.receiverecs[i].parameters[j] + " lastlogmsg: " + ap.ap.receiverecs[i].lastlogmsg[j] + " lastactiveinput " + ap.ap.receiverecs[i].lastactiveinput + " curstatus: " + intToStatus(currentstate));
+                File.AppendAllText("D:\\PBI_IP-T2_STATUS_Reader\\diagnostics.txt", Environment.NewLine);
+
                 if (ap.ap.writetofile)
                 {
                     string tmpmsg = logger.CreateLogMsg(1, i, j, intToStatus(currentstate));
@@ -641,6 +651,11 @@ namespace PBIStatusReader
             if (!isSettingsForm)
             {
                 ap.CreateSettingsForm();
+                // write to the log that program is paused
+                for (int i = 0; i < ap.ap.n; i++)
+                {
+                    logger.rawWrite(i, logger.CreateLogMsg(5, i, 0, ""));
+                }
                 isSettingsForm = true;
             }
         }
@@ -899,6 +914,18 @@ namespace PBIStatusReader
                 return tofile;
             }
 
+            // paused
+            if (type == 5)
+            {
+                string tofile = apobj.ap.patternPaused.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%msg%", msg);
+                return tofile;
+            }
+            // resumed
+            if (type == 6)
+            {
+                string tofile = apobj.ap.patternResumed.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%msg%", msg);
+                return tofile;
+            }
             return "";
         }
 
@@ -1077,6 +1104,8 @@ namespace PBIStatusReader
             public string patternDecoderOK;
             public string patternDecoderConFail;
             public string patternGeneralConFail;
+            public string patternPaused;
+            public string patternResumed;
             public List<ReceiverRecord> receiverecs = new List<ReceiverRecord>();
             public int logconnectlimit; // число неудачных попыток подключения перед записью в лог
         }
@@ -1168,6 +1197,10 @@ namespace PBIStatusReader
 			// шаблон, по которому в лог пишется сообщение об ошибках соединения безотносительно параметра
 			// общий вид - 2017.02.23        11:53:04        TNT        CONNECTION  ERROR   http:// msg
             ap.patternGeneralConFail = "%timestamp%\t%devicename%\tCONNECTION\tERROR\t%url%\t%msg%";
+            // шаблон, по которому в лог пишется о приостановке опроса устройств
+            ap.patternPaused = "%timestamp%\tPAUSED";
+            // шаблон, по которому в лог пишется о возобновлении опроса устройств
+            ap.patternResumed = "%timestamp%\tRESUMED";
         }
         // Set default settings (useful if there is no settings file yet)
         public void setdefaults(ReceiverRecord rr)
@@ -1289,7 +1322,7 @@ namespace PBIStatusReader
             // draw a small form that allows us to set new log formats
             Form setlogformat = new Form();
             setlogformat.Text = "Формат логов";
-            setlogformat.Size = new Size(900, 300);
+            setlogformat.Size = new Size(900, 350);
             setlogformat.TopMost = true;
 
             Label hint = new Label();
@@ -1353,9 +1386,31 @@ namespace PBIStatusReader
             pattern5box.Location = new Point(pattern5cap.Location.X + 280, pattern5cap.Location.Y);
             setlogformat.Controls.Add(pattern5box);
 
+            Label pattern6cap = new Label();
+            pattern6cap.Text = "Приостановка работы программы";
+            pattern6cap.Width = 270;
+            pattern6cap.Location = new Point(pattern5cap.Location.X, pattern5cap.Location.Y + 30);
+            setlogformat.Controls.Add(pattern6cap);
+            TextBox pattern6box = new TextBox();
+            pattern6box.Width = 600;
+            pattern6box.Location = new Point(pattern6cap.Location.X + 280, pattern6cap.Location.Y);
+            pattern6box.Text = ap.patternPaused;
+            setlogformat.Controls.Add(pattern6box);
+
+            Label pattern7cap = new Label();
+            pattern7cap.Text = "Возобновление работы программы";
+            pattern7cap.Width = 270;
+            pattern7cap.Location = new Point(pattern6cap.Location.X, pattern6cap.Location.Y + 30);
+            setlogformat.Controls.Add(pattern7cap);
+            TextBox pattern7box = new TextBox();
+            pattern7box.Width = 600;
+            pattern7box.Location = new Point(pattern7cap.Location.X + 280, pattern7cap.Location.Y);
+            pattern7box.Text = ap.patternResumed;
+            setlogformat.Controls.Add(pattern7box);
+
             Button okbtn = new Button();
             okbtn.Text = "OK";
-            okbtn.Location = new Point(pattern5cap.Location.X, pattern5cap.Location.Y + 30);
+            okbtn.Location = new Point(pattern7cap.Location.X, pattern7cap.Location.Y + 30);
             okbtn.Click += (s, ee) =>
                 {
                     // replace our patterns
@@ -1364,6 +1419,8 @@ namespace PBIStatusReader
                     formobj.oldpatternDecoderOK = pattern3box.Text;
                     formobj.oldpatternDecoderConFail = pattern4box.Text;
                     formobj.oldpatternGeneralConFail = pattern5box.Text;
+                    formobj.oldpatternPaused = pattern6box.Text;
+                    formobj.oldpatternResumed = pattern7box.Text;
                     formobj.isFormatLogForm = false;
                     setlogformat.Close();
                 };
@@ -1588,6 +1645,11 @@ namespace PBIStatusReader
             settingsform.Disposed += (s, e) =>
                 {
                     formobj.isSettingsForm = false;
+                    for (int i = 0; i < ap.n; i++)
+                    {
+                        string resumemsg = formobj.logger.CreateLogMsg(6,i,0,"");
+                        formobj.logger.rawWrite(i,resumemsg);
+                    }
                 };
 
             formobj.dynamicparamls[0, 0].AllowDrop = true;
@@ -2003,6 +2065,8 @@ namespace PBIStatusReader
             ap.patternDecoderOK = formobj.oldpatternDecoderOK;
             ap.patternDecoderConFail = formobj.oldpatternDecoderConFail;
             ap.patternGeneralConFail = formobj.oldpatternGeneralConFail;
+            ap.patternPaused = formobj.oldpatternPaused;
+            ap.patternResumed = formobj.oldpatternResumed;
 
             formobj.isSettingsForm = false; // форма настроек закрыта
             ap.n = tempn;
