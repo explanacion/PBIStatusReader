@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<setstruct xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <n>5</n>
+  <m>5</m>
+  <maxn>15</maxn>
+  <path>MySettings.xml</path>
+  <period>20</period>
+  <periodsnmp>20</periodsnmp>
+  <snmppassword>community</snmppassword>
+  <writetofile>true</writetofile>
+  <isdebuglog>true</isdebuglog>
+  <checkactiveinputs>true</checkactiveinputs>
+  <debuglogpath>diagnostics.txt</debuglogpath>
+  <formwidth>297</formwidth>
+  <formheight>420</formheight>
+  <previousLocationX>1167</previousLocationX>
+  <previousLocationY>258</previousLocationY>
+  <mainlogpath>.\LOG</mainlogpath>
+  <nestedpath>true</nestedpath>
+  <patternLogOK>%timestamp%	%devicename%	INPUT	%paramname%	%msg%	%url%</patternLogOK>
+  <patternLogConFail>%timestamp%	%devicename%	INPUT	%paramname%	ERROR	%url%	%regexp%	%msg%</patternLogConFail>
+  <patternDecoderOK>%timestamp%	%devicename%	DECODER	%paramname%	SET	%url%	%msg%</patternDecoderOK>
+  <patternDecoderConFail>%timestamp%	%devicename%	DECODER	URL	ERROR	%url%	%msg%</patternDecoderConFail>
+  <patternGeneralConFail>%timestamp%	%devicename%	CONNECTION	ERROR	%url%	%msg%</patternGeneralConFail>
+  <patternPaused>%timestamp%	PAUSED</patternPaused>
+  <patternResumed>%timestamp%	RESUMED</patternResumed>
+  <receiverecs>
+    <ReceiverRecord>
+      <name>SUPER</name>
+      <snmpipaddress>192.168.4.231</snmpipaddress>
+      <url>http://192.168.4.231/cgi-bin/input_status.cgi</url>
+      <urlinput>http://192.168.4.231/cgi-bin/decoder_config.cgi</urlinput>
+      <login>root</login>
+      <pass>12345</pass>
+      <workmode>SNMP</workmode>
+      <parameters>
+        <string>S2</string>
+      </parameters>
+      <regexps>
+        <string>&lt;ip value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi1 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi2 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;tuner value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;ci value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+      </regexps>
+      <snmpaddrs>
+        <string>.1.3.6.1.4.1.38295.50.1.1.3.1.0</string>
+      </snmpaddrs>
+      <snmpid>
+        <string>2</string>
+      </snmpid>
+      <matchvalues>
+        <string>2</string>
+      </matchvalues>
+      <paramsaliases />
+      <regexpactiveinput>&lt;option value="\d"\sselected&gt;(.+?)\s&lt;/option&gt;</regexpactiveinput>
+      <snmpinputsaddrs>.1.3.6.1.4.1.38295.50.1.1.3.1.0</snmpinputsaddrs>
+      <m>1</m>
+    </ReceiverRecord>
+    <ReceiverRecord>
+      <name>SUPER-RESERVE</name>
+      <snmpipaddress>192.168.4.232</snmpipaddress>
+      <url>http://192.168.4.232/cgi-bin/input_status.cgi</url>
+      <urlinput>http://192.168.4.232/cgi-bin/decoder_config.cgi</urlinput>
+      <login>root</login>
+      <pass>12345</pass>
+      <workmode>SNMP</workmode>
+      <parameters>
+        <string>S2</string>
+      </parameters>
+      <regexps>
+        <string>&lt;ip value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi1 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi2 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;tuner value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;ci value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+      </regexps>
+      <snmpaddrs>
+        <string>.1.3.6.1.4.1.38295.50.1.1.3.1.0</string>
+      </snmpaddrs>
+      <snmpid>
+        <string>2</string>
+      </snmpid>
+      <matchvalues>
+        <string>2</string>
+      </matchvalues>
+      <paramsaliases />
+      <regexpactiveinput>&lt;option value="\d"\sselected&gt;(.+?)\s&lt;/option&gt;</regexpactiveinput>
+      <snmpinputsaddrs>.1.3.6.1.4.1.38295.50.1.1.3.1.0</snmpinputsaddrs>
+      <m>1</m>
+    </ReceiverRecord>
+    <ReceiverRecord>
+      <name>SIPER-MPEG4</name>
+      <snmpipaddress>192.168.4.241</snmpipaddress>
+      <url>http://192.168.4.233/cgi-bin/input_status.cgi</url>
+      <urlinput>http://192.168.4.233/cgi-bin/decoder_config.cgi</urlinput>
+      <login>root</login>
+      <pass>12345</pass>
+      <workmode>SNMP</workmode>
+      <parameters>
+        <string>SDI</string>
+      </parameters>
+      <regexps>
+        <string>&lt;ip value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi1 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi2 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;tuner value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;ci value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+      </regexps>
+      <snmpaddrs>
+        <string>1.3.6.1.4.1.38295.44.1.1.3.1.0</string>
+      </snmpaddrs>
+      <snmpid>
+        <string>8</string>
+      </snmpid>
+      <matchvalues>
+        <string>8</string>
+      </matchvalues>
+      <paramsaliases />
+      <regexpactiveinput>&lt;option value="\d"\sselected&gt;(.+?)\s&lt;/option&gt;</regexpactiveinput>
+      <snmpinputsaddrs>1.3.6.1.4.1.38295.44.1.1.3.1.0</snmpinputsaddrs>
+      <m>1</m>
+    </ReceiverRecord>
+    <ReceiverRecord>
+      <name>SUPER-MPEG2</name>
+      <snmpipaddress>192.168.4.242</snmpipaddress>
+      <url>192.168.4.242</url>
+      <urlinput>http://192.168.4.231/cgi-bin/decoder_config.cgi</urlinput>
+      <login>root</login>
+      <pass>12345</pass>
+      <workmode>SNMP</workmode>
+      <parameters>
+        <string>SDI</string>
+      </parameters>
+      <regexps>
+        <string>&lt;ip value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi1 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi2 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;tuner value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;ci value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+      </regexps>
+      <snmpaddrs>
+        <string>.1.3.6.1.4.1.1070.3.1.1.106.4.8.0</string>
+      </snmpaddrs>
+      <snmpid>
+        <string>0</string>
+      </snmpid>
+      <matchvalues>
+        <string>0</string>
+      </matchvalues>
+      <paramsaliases>
+        <string>Параметр1</string>
+        <string>Параметр2</string>
+        <string>Параметр3</string>
+        <string>Параметр4</string>
+        <string>Параметр5</string>
+      </paramsaliases>
+      <regexpactiveinput>&lt;option value="\d"\sselected&gt;(.+?)\s&lt;/option&gt;</regexpactiveinput>
+      <snmpinputsaddrs>.1.3.6.1.4.1.1070.3.1.1.106.4.8.0</snmpinputsaddrs>
+      <m>1</m>
+    </ReceiverRecord>
+    <ReceiverRecord>
+      <name>T2 MX2</name>
+      <snmpipaddress>192.168.4.247</snmpipaddress>
+      <url>192.168.4.247</url>
+      <urlinput>http://192.168.4.231/cgi-bin/decoder_config.cgi</urlinput>
+      <login>root</login>
+      <pass>12345</pass>
+      <workmode>SNMP</workmode>
+      <parameters>
+        <string>T2</string>
+      </parameters>
+      <regexps>
+        <string>&lt;ip value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi1 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;asi2 value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;tuner value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+        <string>&lt;ci value="\d"&gt;\W+&lt;lock value="(\d+?)"&gt;</string>
+      </regexps>
+      <snmpaddrs>
+        <string>.1.3.6.1.4.1.38295.50.1.1.3.1.0</string>
+      </snmpaddrs>
+      <snmpid>
+        <string>2</string>
+      </snmpid>
+      <matchvalues>
+        <string>2</string>
+      </matchvalues>
+      <paramsaliases>
+        <string>Параметр1</string>
+        <string>Параметр2</string>
+        <string>Параметр3</string>
+        <string>Параметр4</string>
+        <string>Параметр5</string>
+      </paramsaliases>
+      <regexpactiveinput>&lt;option value="\d"\sselected&gt;(.+?)\s&lt;/option&gt;</regexpactiveinput>
+      <snmpinputsaddrs>.1.3.6.1.4.1.38295.50.1.1.3.1.0</snmpinputsaddrs>
+      <m>1</m>
+    </ReceiverRecord>
+  </receiverecs>
+  <logconnectlimit>3</logconnectlimit>
+  <isTrigger>true</isTrigger>
+  <triggerCmd>D:\App\PBI_IP-T2_STATUS_Reader\Postie\postieK.bat</triggerCmd>
+</setstruct>
