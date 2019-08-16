@@ -241,7 +241,10 @@ namespace PBIStatusReader
             for (int j = 0; j < ap.ap.receiverecs[0].m; j++)
             {
                 dynamicparamls[0, j].Text = ap.ap.receiverecs[0].parameters[j];
-                this.Controls.Add(dynamicparamls[0, j]);
+                if (ap.ap.receiverecs[0].isActive)
+                {
+                    this.Controls.Add(dynamicparamls[0, j]);
+                }
             }
 
             int tempstep = 70;
@@ -251,15 +254,31 @@ namespace PBIStatusReader
                 // выстраиваем лейблы для названий ресиверов
                 if (i == 0)
                 {
-                    recvnamelabels[i].Location = new Point(12, 50);
+                    if (ap.ap.receiverecs[i].isActive)
+                    {
+                        recvnamelabels[i].Location = new Point(12, 50);
+                    }
+                    else
+                    {
+                        recvnamelabels[i].Location = new Point(12, 50 - tempstep);
+                    }
                 }
                 else
                 {
-                    recvnamelabels[i].Location = new Point(12, recvnamelabels[i - 1].Location.Y + tempstep);
+                    if (ap.ap.receiverecs[i].isActive)
+                    {
+                        recvnamelabels[i].Location = new Point(12, recvnamelabels[i - 1].Location.Y + tempstep);
+                    }
+                    else
+                    {
+                        // если устройство отключено в настройках - на форме его не отображаем (скрываем)
+                        recvnamelabels[i].Location = new Point(12, recvnamelabels[i - 1].Location.Y);
+                        continue;
+                    }
                 }
+                if (!ap.ap.receiverecs[i].isActive)
+                    continue;
                 this.Controls.Add(recvnamelabels[i]);
-
-
 
                 // выстраиваем матрицу лампочек-индикаторов
 
@@ -527,70 +546,79 @@ namespace PBIStatusReader
         // snmp mode
         void getSelectedInputSnmp(int i, bool writeanyway)
         {
-                string snmpValue = getValueSNMP(i, ap.ap.receiverecs[i].snmpinputsaddrs);
-                int snmpIndex = ap.ap.receiverecs[i].snmpid.IndexOf(snmpValue);
-                if (snmpIndex == -1)
-                {
-                    logger.WriteToLog(2, i, 0, "Couldn't get active input via snmp");
-                    ap.ap.receiverecs[i].lastactiveinput = "SnmpError";
-                    return;
-                }
-                string activeInput = ap.ap.receiverecs[i].parameters[snmpIndex];
-                if (activeInput == "")
-                {
-                    Console.WriteLine("Error with getting active input via snmp");
-                    logger.WriteToLog(2, i, 0, "Couldn't get active input via snmp");
-                    ap.ap.receiverecs[i].lastactiveinput = "SnmpError";
-                    return;
-                }
+            Console.WriteLine("getSelectedInputSnmp " + i.ToString());
+            if (!ap.ap.receiverecs[i].isActive)
+                return;
+            string snmpValue = getValueSNMP(i, ap.ap.receiverecs[i].snmpinputsaddrs);
+            int snmpIndex = ap.ap.receiverecs[i].snmpid.IndexOf(snmpValue);
+            if (snmpIndex == -1)
+            {
+                //logger.WriteToLog(7, i, 0, "SnmpGetInputError");
+                // ничего не пишем, т.к. ошибка уже пишется внутри функции getValueSNMP
+                //logger.WriteToLog(3, i, j, "OFF");
+                ap.ap.receiverecs[i].lastactiveinput = "SnmpGetInputError";
+                Console.WriteLine("значение не равно ожидаемому");
+                return;
+            }
+            string activeInput = ap.ap.receiverecs[i].parameters[snmpIndex];
+            if (activeInput == "")
+            {
+                Console.WriteLine("Error with getting active input via snmp");
+                logger.WriteToLog(2, i, 0, "Couldn't get active input via snmp");
+                ap.ap.receiverecs[i].lastactiveinput = "SnmpGetInputError";
+                return;
+            }
 
-                for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+            for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
+            {
+                if (activeInput == ap.ap.receiverecs[i].parameters[j])
                 {
-                    if (activeInput == ap.ap.receiverecs[i].parameters[j])
+                    // temp logging
+                    if (ap.ap.isdebuglog)
                     {
-                        // temp logging
-                        if (ap.ap.isdebuglog)
+                        try
                         {
-                            try
-                            {
-                                File.AppendAllText(ap.ap.debuglogpath, "selected input " + activeInput + "\n");
-                            }
-                            catch (System.IO.FileNotFoundException ex)
-                            {
-                                MessageBox.Show("File not found: " + ex.FileName);
-                            }
+                            File.AppendAllText(ap.ap.debuglogpath, "selected input " + activeInput + "\n");
                         }
-                        if (writeanyway)
+                        catch (System.IO.FileNotFoundException ex)
                         {
-                            if (ap.ap.writetofile)
-                            {
-                                //string tmpmsg = logger.CreateLogMsg(3, i, j, pattern);
-                                //logger.rawWrite(i, tmpmsg);
-                                ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
-                                dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
-                                return;
-                            }
-                            if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
-                            {
-                                // изменился
-                                logger.WriteToLog(3, i, j, "Active input changed");
-                            }
+                            MessageBox.Show("File not found: " + ex.FileName);
                         }
-                        ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
-                        dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
+                    }
+                    if (writeanyway)
+                    {
+                        if (ap.ap.writetofile)
+                        {
+                            string tmpmsg = logger.CreateLogMsg(3, i, j, "ON");
+                            logger.rawWrite(i, tmpmsg);
+                            ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
+                            dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
+                            return;
+                        }
+                    }
 
-                    }
-                    else
+                    if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
                     {
-                        // шаблон не найден
-                        //logger.WriteToLog(2, i, 0, "Шаблон поиска активного входа не найден");
-                        //ap.ap.receiverecs[i].lastactiveinput = "PatternError";
+                        // изменился
+                        logger.WriteToLog(3, i, j, "ON");
                     }
+                    ap.ap.receiverecs[i].lastactiveinput = ap.ap.receiverecs[i].parameters[j]; // помечаем активный вход как последний
+                    dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Bold | FontStyle.Underline);
+
                 }
+                else
+                {
+                    // шаблон не найден
+                    //logger.WriteToLog(2, i, 0, "Шаблон поиска активного входа не найден");
+                    //ap.ap.receiverecs[i].lastactiveinput = "PatternError";
+                }
+            }
         }
 
         void getSelectedInput(int i, bool writeanyway)
         {
+            if (!ap.ap.receiverecs[i].isActive)
+                return;
             String str = getHtmlcode(i, ap.ap.receiverecs[i].urlinput, 1);
             if (str == "")
             {
@@ -636,6 +664,7 @@ namespace PBIStatusReader
                                     return;
                                 }
                             }
+
                             if (ap.ap.receiverecs[i].lastactiveinput != ap.ap.receiverecs[i].parameters[j])
                             {
                                 // изменился
@@ -715,6 +744,7 @@ namespace PBIStatusReader
         // snmp mode
         string getValueSNMP(int i, string oid)
         {
+            Console.WriteLine("getValueSNMP " + i.ToString());
             OctetString community = new OctetString("public");
             AgentParameters param = new AgentParameters(community);
             param.Version = SnmpVersion.Ver1;
@@ -723,19 +753,36 @@ namespace PBIStatusReader
             string ip = ap.ap.receiverecs[i].snmpipaddress;
             try
             {
-                myUri = new Uri(ap.ap.receiverecs[i].url);
+                if (ap.ap.receiverecs[i].workmode == "Web")
+                    myUri = new Uri(ap.ap.receiverecs[i].url);
+                else
+                    myUri = new Uri("snmp://" + ap.ap.receiverecs[i].snmpipaddress);
                 isUrlValid = true;
                 if (ip == "")
                     ip = myUri.Host;
+                //Console.WriteLine(ip);
             }
-            catch (System.UriFormatException)
+            catch (System.UriFormatException ex)
             {
                 isUrlValid = false;
             }
-            
+
             if (!isUrlValid)
+            {
                 ip = ap.ap.receiverecs[i].url;
-            IpAddress agent = new IpAddress(ip);
+                // добавить желтую лампочку
+                return "";
+            }
+            IpAddress agent;
+            try
+            {
+                agent = new IpAddress(ip);
+            }
+            catch (ArgumentException ex)
+            {
+                // некорректный ip
+                return "";
+            }
             UdpTarget target = new UdpTarget((IPAddress)agent, 161, 2000, 1);
             Pdu pdu = new Pdu(PduType.Get);
             pdu.VbList.Add(oid);
@@ -751,9 +798,10 @@ namespace PBIStatusReader
                 if (oid == ap.ap.receiverecs[i].snmpinputsaddrs)
                     logId = 2;
                 logger.WriteToLog(logId, i, 0, e.Message);
+                Console.WriteLine("WARNING! EXCEPTION!!!");
                 return "";
             }
-            Console.WriteLine("result = " + result);
+            //Console.WriteLine("result = " + result);
             if (result != null)
             {
                 if (result.Pdu.ErrorStatus != 0)
@@ -774,13 +822,17 @@ namespace PBIStatusReader
         // получаем данные по snmp и анализируем
         void setValueSnmp(int i, bool writeanyway)
         {
+            Console.WriteLine("setValueSnmp " + i.ToString());
+            if (!ap.ap.receiverecs[i].isActive)
+                return;
             // считываем по одному параметру в цикле
             for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
             {
                 string param = getValueSNMP(i, ap.ap.receiverecs[i].snmpaddrs[j]).Trim();
-                Console.WriteLine("i=" + i.ToString());
-                Console.WriteLine((param == ap.ap.receiverecs[i].matchvalues[j]).ToString());
-                Console.WriteLine("getValueSNMP = " + param + ", expected value=" + ap.ap.receiverecs[i].matchvalues[j]);
+                //Console.WriteLine("i=" + i.ToString() + " " + "name = " + ap.ap.receiverecs[i].name);
+                //Console.WriteLine("ip = " + ap.ap.receiverecs[i].snmpipaddress);
+                //Console.WriteLine((param == ap.ap.receiverecs[i].matchvalues[j]).ToString());
+                //Console.WriteLine("getValueSNMP = " + param + ", expected value=" + ap.ap.receiverecs[i].matchvalues[j]);
                 if (param == "")
                 {
                     logger.WriteToLog(0, i, 0, "SnmpError");
@@ -815,7 +867,7 @@ namespace PBIStatusReader
                         if (writeanyway)
                         {
                             // безусловная запись
-                            logger.rawWrite(i, tmpmsg + " midnight record ");
+                            logger.rawWrite(i, tmpmsg);
                             ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                             continue;
                         }
@@ -831,7 +883,7 @@ namespace PBIStatusReader
                 }
                 else
                 {
-                    // значение параметра не совпадает с ожидаемым значением
+                    // значение параметра  идаемым значением
                     currentstate = 0;
                     setColorOfPictureBox(pictureBoxes[i, j], 0);
                     logger.WriteToLog(1, i, j, intToStatus(currentstate));
@@ -857,7 +909,7 @@ namespace PBIStatusReader
                         if (writeanyway)
                         {
                             // безусловная запись
-                            logger.rawWrite(i, tmpmsg + " midnight record ");
+                            logger.rawWrite(i, tmpmsg);
                             ap.ap.receiverecs[i].lastlogmsg[j] = templastmessage;
                             continue;
                         }
@@ -879,6 +931,8 @@ namespace PBIStatusReader
         // web mode
         void setValue(int i, bool writeanyway)
 		{
+            if (!ap.ap.receiverecs[i].isActive)
+                return;
 			String str = getHtmlcode(i,geturlbyid(i),0);
             
             if (str == "")
@@ -971,6 +1025,7 @@ namespace PBIStatusReader
         
         void setValuesSNMP()
         {
+            Console.WriteLine("setValuesSNMP");
 			for (int i = 0; i<ap.ap.n; i++)
 			{
                 if (ap.ap.receiverecs[i].workmode == "SNMP")
@@ -978,11 +1033,11 @@ namespace PBIStatusReader
 			}
             if (GlobalVars.firstscan)
                 GlobalVars.firstscan = false;
-            //Console.WriteLine("firstscan is " + GlobalVars.firstscan.ToString());
         }
         
         void getSelectedInputsSNMP()
         {
+            Console.WriteLine("getSelectedInputsSNMP");
             makeregulardynamiclabels();
             for (int i = 0; i<ap.ap.n; i++)
             {
@@ -1078,7 +1133,7 @@ namespace PBIStatusReader
         int currentIndex;
         IDictionary<int, int> connectionfailcnt;
         System.Collections.Generic.Dictionary<int,string>[] lastlogmsg; // буфер для хранения последних сообщений
-        System.Collections.Generic.Dictionary<int, string>[] lastlogdecodermsg; // буфер для хранения последних сообщений декодера
+        System.Collections.Generic.Dictionary<int, string>[] lastlogdecodermsg; // буфер для хранения последних сообщений декодера (значений активного входа)
         StreamWriter[] logwriters;
         public int oldsize;
         public LogManager(settings ap)
@@ -1143,7 +1198,7 @@ namespace PBIStatusReader
             }
         }
 		
-        // type - тип счетчика: 0 - общий, 1 - декодера
+        // type - тип счетчика: 0 - общий, 1 - декодера (активный вход)
 		public bool incrementCnt(int type, int i)
 		{
             if (type == 0)
@@ -1160,7 +1215,7 @@ namespace PBIStatusReader
             }
             else
             {
-                // счетчик декодера
+                // счетчик декодера (активный вход)
                 connectionfailcnt[i] = (connectionfailcnt[i] + 1) % apobj.ap.logconnectlimit;
 
                 if (connectionfailcnt[i] >= apobj.ap.logconnectlimit - 1)
@@ -1261,13 +1316,25 @@ namespace PBIStatusReader
         }
 
         // проверка на дублирующее сообщение
-        public bool isNewLastMsg(int i, int j, string currentmsg)
+        public bool isNewLastMsg(int i, int j, string currentmsg, int type)
         {
+            // если добавили новый параметр в настройках, а в массиве его не было
+            if (lastlogdecodermsg[i].Count <= j)
+                lastlogdecodermsg[i].Add(j, "");
+            if (lastlogmsg[i].Count <= j)
+                lastlogmsg[i].Add(j, "");
             if (lastlogmsg[i][j] == "" && lastlogdecodermsg[i][j] == "")
                 return true;
 			//Console.WriteLine("dupl msg check: " + lastlogmsg[i][j] + " " + currentmsg);
-            if (lastlogmsg[i][j].IndexOf(currentmsg) != -1 || lastlogdecodermsg[i][j].IndexOf(currentmsg) != -1)
+            // параметр
+            if (type == 0 || type == 1 || type == 4)
             {
+                if (currentmsg != "" && lastlogmsg[i][j].IndexOf(currentmsg) != -1)
+                    return false;
+            }
+            if (type == 2 || type == 3)
+            {
+                if (currentmsg != "" && lastlogdecodermsg[i][j].IndexOf(currentmsg) != -1)
                     return false;
             }
             return true;
@@ -1290,7 +1357,13 @@ namespace PBIStatusReader
             // connection main log
             if (type == 0)
             {
-                string tofile = apobj.ap.patternLogConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("%msg%", msg).Replace("\\t", "\t");
+                string tofile;
+                if (apobj.ap.receiverecs[i].workmode == "Web")
+                    tofile = apobj.ap.patternLogConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("%msg%", msg).Replace("\\t", "\t");
+                else
+                    tofile = apobj.ap.patternLogConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%regexp%", apobj.ap.receiverecs[i].snmpaddrs[j]).Replace("%msg%", msg).Replace("\\t", "\t");
+                // если %regexp% пустой (не подставился), убираем его
+                tofile = tofile.Replace("%regexp%", "").Replace("%paramname%","");
                 return tofile;
             }
             // normal log
@@ -1301,7 +1374,8 @@ namespace PBIStatusReader
                 if (apobj.ap.receiverecs[i].workmode == "Web")
                     tofile = apobj.ap.patternLogOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("%msg%", msg).Replace("\\t","\t");
                 else
-                    tofile = apobj.ap.patternLogOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("%msg%", msg).Replace("\\t", "\t");
+                    tofile = apobj.ap.patternLogOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%regexp%", apobj.ap.receiverecs[i].snmpaddrs[j]).Replace("%msg%", msg).Replace("\\t", "\t");
+                tofile = tofile.Replace("%regexp%", "").Replace("%paramname%", "");
                 return tofile;
             }
             // connection decoder log
@@ -1309,9 +1383,10 @@ namespace PBIStatusReader
             {
                 string tofile = "";
                 if (apobj.ap.receiverecs[i].workmode == "Web")
-                    tofile = apobj.ap.patternDecoderConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].urlinput).Replace("%msg%", msg).Replace("\\t", "\t");
+                    tofile = apobj.ap.patternDecoderConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].urlinput).Replace("%msg%", msg).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("\\t", "\t");
                 else
-                    tofile = apobj.ap.patternDecoderConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%msg%", msg).Replace("\\t", "\t");
+                    tofile = apobj.ap.patternDecoderConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%msg%", msg).Replace("%regexp%", apobj.ap.receiverecs[i].snmpinputsaddrs).Replace("\\t", "\t");
+                tofile = tofile.Replace("%regexp%", "").Replace("%paramname%", "");
                 return tofile;
             }
             // decoder normal log
@@ -1319,16 +1394,22 @@ namespace PBIStatusReader
             {
                 string tofile = "";
                 if (apobj.ap.receiverecs[i].workmode == "Web")
-                    tofile = apobj.ap.patternDecoderOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].urlinput).Replace("%msg%", msg).Replace("\\t", "\t");
+                    tofile = apobj.ap.patternDecoderOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].urlinput).Replace("%msg%", msg).Replace("%regexp%", apobj.ap.receiverecs[i].regexps[j]).Replace("\\t", "\t");
                 else
-                    tofile = apobj.ap.patternDecoderOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpinputsaddrs).Replace("%msg%", msg).Replace("\\t", "\t");
+                    tofile = apobj.ap.patternDecoderOK.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%paramname%", apobj.ap.receiverecs[i].parameters[j]).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%msg%", msg).Replace("%regexp%", apobj.ap.receiverecs[i].snmpinputsaddrs).Replace("\\t", "\t");
+                tofile = tofile.Replace("%regexp%", "").Replace("%paramname%", "");
                 return tofile;
             }
             
             // general connection fail
             if (type == 4)
             {
-                string tofile = apobj.ap.patternGeneralConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%msg%", msg);
+                string tofile = "";
+                if (apobj.ap.receiverecs[i].workmode == "Web")
+                    tofile = apobj.ap.patternGeneralConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%url%", apobj.ap.receiverecs[i].url).Replace("%msg%", msg);
+                else
+                    tofile = apobj.ap.patternGeneralConFail.Replace("%timestamp%", getTimeStamp()).Replace("%devicename%", apobj.ap.receiverecs[i].name).Replace("%url%", apobj.ap.receiverecs[i].snmpipaddress).Replace("%msg%", msg);
+                tofile = tofile.Replace("%regexp%", "").Replace("%paramname%", "");
                 return tofile;
             }
 
@@ -1349,7 +1430,7 @@ namespace PBIStatusReader
 
         public void WriteToLog(int type, int i, int j, string msg)
         {
-            if (!isNewLastMsg(i, j, msg))
+            if (!isNewLastMsg(i, j, msg, type))
                 return;
             string tofile = CreateLogMsg(type, i, j, msg);
             // если задан триггер - запускаем его
@@ -1392,20 +1473,20 @@ namespace PBIStatusReader
             if (!apobj.ap.writetofile)
                 return;
 
+            // финт ушами, если ttype изменится - значит, нужно ждать перед записью (пишем наверняка, при повторении ошибки несколько раз)
             int ttype = -1; 
             if (type == 0)
             {
                 ttype = 0; // тип ошибки соединения - основная страница
             }
 			if (type == 2) {
-                ttype = 1; // тип ошибки соединения - страница декодера
+                ttype = 1; // тип ошибки соединения - страница декодера (активный вход)
             }
             if (ttype != -1)
             {
                 if (!incrementCnt(ttype, i))
                     return;
             }
-            
             string skipped = string.Join("\t",tofile.Split(new char[] { '\t' }).Skip(2).ToArray());
             SetLastMsg(type, i, j, skipped);
             rawWrite(i, tofile);
@@ -1486,6 +1567,7 @@ namespace PBIStatusReader
         public string login;
         public string pass;
         public string workmode; // web/snmp
+        public bool isActive; // отключенное или включенное устройство
 
         [XmlIgnore]
         public List<string> lastlogmsg; // последние записанные в лог сообщения, по 1 на параметр
@@ -1606,6 +1688,7 @@ namespace PBIStatusReader
         Form settingsform;
         NumericUpDown receivescnt;
         TextBox[] tnames;
+        CheckBox[] isActiveChkboxes;
         TextBox[] turls;
         Label[] captions;
         NumericUpDown height;
@@ -1677,8 +1760,8 @@ namespace PBIStatusReader
             {
                 // копируем настройки второй формы
                 // название проверяемых параметров (multiline)
-                Console.WriteLine(i.ToString() + "/" + ap.n.ToString());
-                Console.WriteLine(ap.receiverecs[i].parameters.ToList());
+                //Console.WriteLine(i.ToString() + "/" + ap.n.ToString());
+                //Console.WriteLine(ap.receiverecs[i].parameters.ToList());
                 oldap.ap.receiverecs[i].parameters = ap.receiverecs[i].parameters.ToList();
 
                 // номер параметра в snmp (multiline)
@@ -1750,6 +1833,7 @@ namespace PBIStatusReader
             rr.urlinput = "http://192.168.4.231/cgi-bin/decoder_config.cgi";
             rr.snmpipaddress = "192.168.4.231";
             rr.workmode = "Web";
+            rr.isActive = true;
             rr.parameters[0] = "IP";
             rr.parameters[1] = "ASI1";
             rr.parameters[2] = "ASI2";
@@ -1799,7 +1883,7 @@ namespace PBIStatusReader
                 if (newn > ap.receiverecs.Capacity)
                 {
                     ap.receiverecs.AddRange(new List<ReceiverRecord>(new ReceiverRecord[newn - countr]));
-                    Console.WriteLine(ap.receiverecs.Count);
+                    //Console.WriteLine(ap.receiverecs.Count);
                 }
             }
             else if (newn < countr)
@@ -1909,7 +1993,7 @@ namespace PBIStatusReader
 
 
             Button okbtn = new Button();
-            okbtn.Text = "OK";
+            okbtn.Text = "ON";
             okbtn.Click += (s, e) =>
             {
                 // save params to struct
@@ -1962,7 +2046,7 @@ namespace PBIStatusReader
                 setparamsform.Close();
             };
             okbtn.Location = new Point(textboxparams.Location.X + 10, capblock5.Location.Y + capblock5.Height + 40);
-            Console.WriteLine(okbtn.Location);
+            //Console.WriteLine(okbtn.Location);
             Button cancelbtn = new Button();
             cancelbtn.Click += (s, e) =>
             {
@@ -2202,7 +2286,7 @@ namespace PBIStatusReader
             // draw a small form that allows us to set new log formats
             Form setlogformat = new Form();
             setlogformat.Text = "Формат логов";
-            setlogformat.Size = new Size(900, 350);
+            setlogformat.Size = new Size(1000, 400);
             setlogformat.TopMost = true;
 
             Label hint = new Label();
@@ -2210,81 +2294,82 @@ namespace PBIStatusReader
             hint.Height = 50;
             hint.Font = new Font(hint.Font, FontStyle.Bold);
 
-            hint.Text = "Переменные подстановки:\r\n%timestamp% - дата и время, %devicename% - название устройства, %paramname% - имя параметра (не для всех логов),\r\n %url% - адрес для подключения, %msg% - подробности или системное сообщение, %regexp% - шаблон для поиска данных (не для всех логов)";
+            hint.Text = "Переменные подстановки:\r\n%timestamp% - дата и время, %devicename% - название устройства, %paramname% - имя параметра (не для всех логов),\r\n %url% - адрес для подключения, %msg% - подробности или системное сообщение, %regexp% - шаблон для поиска данных/snmp адрес";
             hint.Location = new Point(setlogformat.Location.X, setlogformat.Location.Y + 10);
             setlogformat.Controls.Add(hint);
             Label pattern1cap = new Label();
             pattern1cap.Text = "Изменение состояния входов";
-            pattern1cap.Width = 270;
+            pattern1cap.Width = 370;
             pattern1cap.Location = new Point(setlogformat.Location.X, setlogformat.Location.Y + 60);
             setlogformat.Controls.Add(pattern1cap);
             TextBox pattern1box = new TextBox();
             pattern1box.Width = 600;
-            pattern1box.Location = new Point(pattern1cap.Location.X + 280, pattern1cap.Location.Y);
+            pattern1box.Location = new Point(pattern1cap.Location.X + 380, pattern1cap.Location.Y);
             pattern1box.Text = ap.patternLogOK;
             setlogformat.Controls.Add(pattern1box);
 
             Label pattern2cap = new Label();
             pattern2cap.Text = "Ошибки и проблемы с получением данных о входах";
-            pattern2cap.Width = 270;
+            pattern2cap.Width = 290;
             pattern2cap.Location = new Point(pattern1cap.Location.X, pattern1cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern2cap);
             TextBox pattern2box = new TextBox();
             pattern2box.Width = 600;
             pattern2box.Text = ap.patternLogConFail;
-            pattern2box.Location = new Point(pattern2cap.Location.X + 280, pattern2cap.Location.Y);
+            pattern2box.Location = new Point(pattern2cap.Location.X + 380, pattern2cap.Location.Y);
             setlogformat.Controls.Add(pattern2box);
 
             Label pattern3cap = new Label();
             pattern3cap.Text = "Изменение активного входа";
-            pattern3cap.Width = 270;
+            pattern3cap.Width = 290;
             pattern3cap.Location = new Point(pattern2cap.Location.X, pattern2cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern3cap);
             TextBox pattern3box = new TextBox();
             pattern3box.Width = 600;
-            pattern3box.Location = new Point(pattern3cap.Location.X + 280, pattern3cap.Location.Y);
+            pattern3box.Location = new Point(pattern3cap.Location.X + 380, pattern3cap.Location.Y);
             pattern3box.Text = ap.patternDecoderOK;
             setlogformat.Controls.Add(pattern3box);
             Label pattern4cap = new Label();
-            pattern4cap.Text = "Ошибки и проблемы с подключением к странице декодера";
-            pattern4cap.Width = 270;
+            pattern4cap.Text = "Ошибка получения активного входа";
+            pattern4cap.Width = 290;
             pattern4cap.Location = new Point(pattern3cap.Location.X, pattern3cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern4cap);
             TextBox pattern4box = new TextBox();
             pattern4box.Width = 600;
             pattern4box.Text = ap.patternDecoderConFail;
-            pattern4box.Location = new Point(pattern4cap.Location.X + 280, pattern4cap.Location.Y);
+            pattern4box.Location = new Point(pattern4cap.Location.X + 380, pattern4cap.Location.Y);
             setlogformat.Controls.Add(pattern4box);
+
             Label pattern5cap = new Label();
             pattern5cap.Text = "Другие ошибки";
-            pattern5cap.Width = 270;
+            pattern5cap.Width = 290;
             pattern5cap.Location = new Point(pattern4cap.Location.X, pattern4cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern5cap);
             TextBox pattern5box = new TextBox();
             pattern5box.Width = 600;
             pattern5box.Text = ap.patternGeneralConFail;
-            pattern5box.Location = new Point(pattern5cap.Location.X + 280, pattern5cap.Location.Y);
+            pattern5box.Location = new Point(pattern5cap.Location.X + 380, pattern5cap.Location.Y);
             setlogformat.Controls.Add(pattern5box);
 
             Label pattern6cap = new Label();
             pattern6cap.Text = "Приостановка работы программы";
-            pattern6cap.Width = 270;
+            pattern6cap.Width = 290;
             pattern6cap.Location = new Point(pattern5cap.Location.X, pattern5cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern6cap);
             TextBox pattern6box = new TextBox();
             pattern6box.Width = 600;
-            pattern6box.Location = new Point(pattern6cap.Location.X + 280, pattern6cap.Location.Y);
+            pattern6box.Location = new Point(pattern6cap.Location.X + 380, pattern6cap.Location.Y);
             pattern6box.Text = ap.patternPaused;
             setlogformat.Controls.Add(pattern6box);
 
             Label pattern7cap = new Label();
             pattern7cap.Text = "Возобновление работы программы";
-            pattern7cap.Width = 270;
+            pattern7cap.Width = 300;
             pattern7cap.Location = new Point(pattern6cap.Location.X, pattern6cap.Location.Y + 30);
             setlogformat.Controls.Add(pattern7cap);
             TextBox pattern7box = new TextBox();
             pattern7box.Width = 600;
-            pattern7box.Location = new Point(pattern7cap.Location.X + 280, pattern7cap.Location.Y);
+            pattern7box.Location = new Point(pattern7cap.Location.X + 380, pattern7cap.Location.Y);
             pattern7box.Text = ap.patternResumed;
             setlogformat.Controls.Add(pattern7box);
 
@@ -2342,6 +2427,7 @@ namespace PBIStatusReader
                 for (int i = oldvalue; i < newvalue; ++i)
                 {
                     Array.Resize(ref tnames, newvalue);
+                    Array.Resize(ref isActiveChkboxes, newvalue);
                     Array.Resize(ref turls, newvalue);
                     Array.Resize(ref combomode, newvalue);
                     Array.Resize(ref paramitems, newvalue);
@@ -2350,6 +2436,7 @@ namespace PBIStatusReader
 
                     tnames[i] = new TextBox();
                     turls[i] = new TextBox();
+                    isActiveChkboxes[i] = new CheckBox();
                     combomode[i] = new ComboBox();
                     combomode[i].Items.Add("Web");
                     combomode[i].Items.Add("SNMP");
@@ -2358,8 +2445,11 @@ namespace PBIStatusReader
                     paramitems[i] = new Button();
                     regexps[i] = new Button();
                     captions[i] = new Label();
+                    //isActiveChkboxes[i].Location = new Point
                     tnames[i].Location = new Point(tnames[i - 1].Location.X, tnames[i - 1].Location.Y + 40);
+                    isActiveChkboxes[i].Location = new Point(5, tnames[i].Location.Y);
                     settingsform.Controls.Add(tnames[i]);
+                    settingsform.Controls.Add(isActiveChkboxes[i]);
                     captions[i].Location = new Point(tnames[i - 1].Location.X, tnames[i - 1].Location.Y + 20);
                     settingsform.Controls.Add(captions[i]);
                     turls[i].Location = new Point(tnames[i].Location.X + 100, tnames[i].Location.Y);
@@ -2462,6 +2552,9 @@ namespace PBIStatusReader
                     settingsform.Controls.Remove(tnames[i - 1]);
                     tnames[i - 1].Dispose();
 
+                    isActiveChkboxes[i - 1].Hide();
+                    settingsform.Controls.Remove(isActiveChkboxes[i - 1]);
+                    isActiveChkboxes[i - 1].Dispose();
 
                     turls[i - 1].Hide();
                     settingsform.Controls.Remove(turls[i - 1]);
@@ -2596,6 +2689,7 @@ namespace PBIStatusReader
             settingsform = new Form();
             receivescnt = new NumericUpDown();
             tnames = new TextBox[ap.n];
+            isActiveChkboxes = new CheckBox[ap.n];
             turls = new TextBox[ap.n];
             combomode = new ComboBox[ap.n];
             
@@ -2636,6 +2730,18 @@ namespace PBIStatusReader
             {
                 bool getmode = (ap.receiverecs[i].workmode == "Web" ? true : false);
                 tnames[i] = new TextBox();
+                isActiveChkboxes[i] = new CheckBox();
+                isActiveChkboxes[i].Name = i.ToString();
+                isActiveChkboxes[i].Size = new Size(20, 20);
+                isActiveChkboxes[i].CheckedChanged += (s,e) => {
+                    var state = s as CheckBox;
+                    int index = Int32.Parse(state.Name);
+                    ap.receiverecs[index].isActive = state.Checked;
+                    tnames[index].Enabled = state.Checked;
+                    turls[index].Enabled = state.Checked;
+                    combomode[index].Enabled = state.Checked;
+                    paramitems[index].Enabled = state.Checked;
+                };
                 turls[i] = new TextBox();
                 combomode[i] = new ComboBox();
                 combomode[i].Items.Add("Web");
@@ -2658,11 +2764,13 @@ namespace PBIStatusReader
                 if (i == 0)
                 {
                     settingsform.Controls.Add(receivescnt); // numerica updown for receivers
-                    captions[i].Location = new Point(5, 35);
+                    captions[i].Location = new Point(25, 35);
                     settingsform.Controls.Add(captions[i]);
+                    settingsform.Controls.Add(isActiveChkboxes[i]);
                     // потом поля ввода
                     // левые
                     tnames[i].Location = new Point(captions[i].Location.X, captions[i].Location.Y + 20);
+                    isActiveChkboxes[i].Location = new Point(5, tnames[i].Location.Y);
                     settingsform.Controls.Add(tnames[i]);
                     // правые
                     turls[i].Location = new Point(tnames[i].Location.X + 100, tnames[i].Location.Y);
@@ -2683,11 +2791,14 @@ namespace PBIStatusReader
                 {
                     // сначала подписи к полям
                     captions[i].Location = new Point(tnames[i - 1].Location.X, tnames[i - 1].Location.Y + 20);
+                    isActiveChkboxes[i].Size = new Size(20, 20);
                     settingsform.Controls.Add(captions[i]);
                     // потом поля ввода
                     // левые
                     tnames[i].Location = new Point(tnames[i - 1].Location.X, tnames[i - 1].Location.Y + 40);
+                    isActiveChkboxes[i].Location = new Point(5, tnames[i].Location.Y);
                     settingsform.Controls.Add(tnames[i]);
+                    settingsform.Controls.Add(isActiveChkboxes[i]);
                     // правые
                     turls[i].Location = new Point(tnames[i].Location.X + 100, tnames[i].Location.Y);
                     turls[i].Width = 120;
@@ -2983,6 +3094,7 @@ namespace PBIStatusReader
                 // params and regexps we should set in buttons handlers
                 // turlset[i].Text = ap.receiverecs[i].urlinput;
                 combomode[i].Text = ap.receiverecs[i].workmode;
+                isActiveChkboxes[i].Checked = ap.receiverecs[i].isActive;
             }
             logmaindir.Text = ap.mainlogpath;
             tnestedpath.Checked = ap.nestedpath;
@@ -3010,6 +3122,7 @@ namespace PBIStatusReader
                     ap.receiverecs[i].snmpipaddress = turls[i].Text;
                 //ap.receiverecs[i].urlinput = turlset[i].Text;
                 ap.receiverecs[i].workmode = combomode[i].Text;
+                ap.receiverecs[i].isActive = isActiveChkboxes[i].Checked;
             }
             ap.writetofile = twritetofile.Checked;
             ap.period = Convert.ToUInt32(tperiod.Value);
@@ -3047,12 +3160,12 @@ namespace PBIStatusReader
             // проверка полей на заполненность
             for (int i = 0; i < tempn; i++)
             {
-                if (turls[i].Visible && turls[i].Text == "")
+                if (isActiveChkboxes[i].Checked && turls[i].Visible && turls[i].Text == "")
                 {
                     MessageBox.Show("Внимание! Одно из полей IP-адреса не задано.");
                     return;
                 }
-                if (tnames[i].Visible && tnames[i].Text == "")
+                if (isActiveChkboxes[i].Checked &&  tnames[i].Visible && tnames[i].Text == "")
                 {
                     MessageBox.Show("Внимание! Одно из полей имени устройства не задано.");
                     return;
@@ -3077,13 +3190,13 @@ namespace PBIStatusReader
                 //n4 = 31
                 //n5 = 1
 
-                Console.WriteLine("i = " + i);
-                Console.WriteLine("getmode = " + getmode.ToString());
-                Console.WriteLine("n1 = " + n1);
-                Console.WriteLine("n2 = " + n2);
-                Console.WriteLine("n3 = " + n3);
-                Console.WriteLine("n4 = " + n4);
-                Console.WriteLine("n5 = " + n5);
+                //Console.WriteLine("i = " + i);
+                //Console.WriteLine("getmode = " + getmode.ToString());
+                //Console.WriteLine("n1 = " + n1);
+                //Console.WriteLine("n2 = " + n2);
+                //Console.WriteLine("n3 = " + n3);
+                //Console.WriteLine("n4 = " + n4);
+                //Console.WriteLine("n5 = " + n5);
                  
 
                 if (!getmode)
