@@ -20,11 +20,6 @@ using System.Runtime.Serialization.Formatters.Binary;
 
 namespace PBIStatusReader
 {
-    public class GlobalVars
-    {
-        public static bool firstscan; // флаг-индикатор того, что опрос устройств произошел пока только 1 раз
-    }
-
     public partial class Form1 : Form
     {
         int n = 15; // число ресиверов
@@ -136,7 +131,6 @@ namespace PBIStatusReader
             timer1.Stop(); // don't check the data for a while
             timer2.Stop();
 			logger.reopenlogfiles();
-            //(int)ap.ap.period - (int)ap.ap.periodsnmp
 
             Task.Factory.StartNew(() => midnightsetValues()).ContinueWith(t => midnightgetSelectedInputs());
             timer1.Interval = 1000 * (int)ap.ap.period;
@@ -445,13 +439,14 @@ namespace PBIStatusReader
                 {
                     // status page
                     MakeAllLightsYellow(i);
-					ap.ap.receiverecs[i].lastactiveinput = "NoConnect";
+                    // не сбрасываем статус до 3 попыток, чтобы соответствовало записи в логе
+					//ap.ap.receiverecs[i].lastactiveinput = "NoConnect";
                     logger.WriteToLog(0, i, 0, e.Message);
                 }
                 else if (type == 1)
                 {
                     // decoder page
-                    ap.ap.receiverecs[i].lastactiveinput = "NoConnect";
+                    // ap.ap.receiverecs[i].lastactiveinput = "NoConnect";
                     logger.WriteToLog(2, i, 0, e.Message);
                 }
                 return "";
@@ -534,7 +529,7 @@ namespace PBIStatusReader
                 if (type == 0)
                 {
                     MakeAllLightsYellow(i);
-                    setLastMsgs(i, "Exception");
+                    //setLastMsgs(i, "Exception");
                 }
                 // пишем в лог
                 logger.WriteToLog(4, i, 0, e.Message);
@@ -556,7 +551,7 @@ namespace PBIStatusReader
                 //logger.WriteToLog(7, i, 0, "SnmpGetInputError");
                 // ничего не пишем, т.к. ошибка уже пишется внутри функции getValueSNMP
                 //logger.WriteToLog(3, i, j, "OFF");
-                ap.ap.receiverecs[i].lastactiveinput = "SnmpGetInputError";
+                //ap.ap.receiverecs[i].lastactiveinput = "SnmpGetInputError";
                 Console.WriteLine("значение не равно ожидаемому");
                 return;
             }
@@ -565,7 +560,7 @@ namespace PBIStatusReader
             {
                 Console.WriteLine("Error with getting active input via snmp");
                 logger.WriteToLog(2, i, 0, "Couldn't get active input via snmp");
-                ap.ap.receiverecs[i].lastactiveinput = "SnmpGetInputError";
+                //ap.ap.receiverecs[i].lastactiveinput = "SnmpGetInputError";
                 return;
             }
 
@@ -623,7 +618,7 @@ namespace PBIStatusReader
             if (str == "")
             {
                 Console.WriteLine("Error with getting the html code of decoder page");
-                ap.ap.receiverecs[i].lastactiveinput = "EmptyPage";
+                //ap.ap.receiverecs[i].lastactiveinput = "EmptyPage";
                 return;
             }
             string pattern = ap.ap.receiverecs[i].regexpactiveinput; //@"<option value=""\d""\sselected>(.+?)\s</option>";
@@ -682,7 +677,7 @@ namespace PBIStatusReader
             {
                 // шаблон не найден
                 logger.WriteToLog(2, i, 0, "The pattern for finding an active input not exists");
-                ap.ap.receiverecs[i].lastactiveinput = "PatternError";
+                //ap.ap.receiverecs[i].lastactiveinput = "PatternError";
             }
         }
 		
@@ -798,7 +793,7 @@ namespace PBIStatusReader
                 if (oid == ap.ap.receiverecs[i].snmpinputsaddrs)
                     logId = 2;
                 logger.WriteToLog(logId, i, 0, e.Message);
-                Console.WriteLine("WARNING! EXCEPTION!!!");
+                //Console.WriteLine("WARNING! EXCEPTION!!!");
                 return "";
             }
             //Console.WriteLine("result = " + result);
@@ -835,7 +830,7 @@ namespace PBIStatusReader
                 //Console.WriteLine("getValueSNMP = " + param + ", expected value=" + ap.ap.receiverecs[i].matchvalues[j]);
                 if (param == "")
                 {
-                    logger.WriteToLog(0, i, 0, "SnmpError");
+                    //logger.WriteToLog(0, i, 0, "SnmpError");
                     setColorOfPictureBox(pictureBoxes[i, j], 2);
                     continue;
                 }
@@ -883,10 +878,10 @@ namespace PBIStatusReader
                 }
                 else
                 {
-                    // значение параметра  идаемым значением
+                    // значение параметра не совпадает с ожидаемым значением
                     currentstate = 0;
                     setColorOfPictureBox(pictureBoxes[i, j], 0);
-                    logger.WriteToLog(1, i, j, intToStatus(currentstate));
+                    //logger.WriteToLog(1, i, j, intToStatus(currentstate));
                     if (ap.ap.writetofile)
                     {
                         string tmpmsg = logger.CreateLogMsg(1, i, j, "OFF");
@@ -1124,6 +1119,11 @@ namespace PBIStatusReader
             about.Controls.Add(ok);
             about.Show();
         }
+    }
+
+    public class GlobalVars
+    {
+        public static bool firstscan; // флаг-индикатор того, что опрос устройств произошел пока только 1 раз
     }
 
     public class LogManager
@@ -1487,6 +1487,13 @@ namespace PBIStatusReader
                 if (!incrementCnt(ttype, i))
                     return;
             }
+			
+			if (type == 4)
+				apobj.ap.receiverecs[i].lastactiveinput = "NoConnect";
+			if (type == 2)
+				apobj.ap.receiverecs[i].lastactiveinput = "NoDecoderConnect";
+			if (type == 0)
+				apobj.ap.receiverecs[i].lastactiveinput = "NoConnect";
             string skipped = string.Join("\t",tofile.Split(new char[] { '\t' }).Skip(2).ToArray());
             SetLastMsg(type, i, j, skipped);
             rawWrite(i, tofile);
