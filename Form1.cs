@@ -529,7 +529,7 @@ namespace PBIStatusReader
                 if (type == 0)
                 {
                     MakeAllLightsYellow(i);
-                    //setLastMsgs(i, "Exception");
+                    setLastMsgs(i, "Exception");
                 }
                 // пишем в лог
                 logger.WriteToLog(4, i, 0, e.Message);
@@ -618,7 +618,7 @@ namespace PBIStatusReader
             if (str == "")
             {
                 Console.WriteLine("Error with getting the html code of decoder page");
-                //ap.ap.receiverecs[i].lastactiveinput = "EmptyPage";
+                ap.ap.receiverecs[i].lastactiveinput = "EmptyPage";
                 return;
             }
             string pattern = ap.ap.receiverecs[i].regexpactiveinput; //@"<option value=""\d""\sselected>(.+?)\s</option>";
@@ -740,7 +740,7 @@ namespace PBIStatusReader
         string getValueSNMP(int i, string oid)
         {
             Console.WriteLine("getValueSNMP " + i.ToString());
-            OctetString community = new OctetString("public");
+            OctetString community = new OctetString(ap.ap.receiverecs[i].snmppassword);
             AgentParameters param = new AgentParameters(community);
             param.Version = SnmpVersion.Ver1;
             System.Uri myUri;
@@ -830,7 +830,7 @@ namespace PBIStatusReader
                 //Console.WriteLine("getValueSNMP = " + param + ", expected value=" + ap.ap.receiverecs[i].matchvalues[j]);
                 if (param == "")
                 {
-                    //logger.WriteToLog(0, i, 0, "SnmpError");
+                    logger.WriteToLog(0, i, 0, "SnmpError");
                     setColorOfPictureBox(pictureBoxes[i, j], 2);
                     continue;
                 }
@@ -1487,13 +1487,6 @@ namespace PBIStatusReader
                 if (!incrementCnt(ttype, i))
                     return;
             }
-			
-			if (type == 4)
-				apobj.ap.receiverecs[i].lastactiveinput = "NoConnect";
-			if (type == 2)
-				apobj.ap.receiverecs[i].lastactiveinput = "NoDecoderConnect";
-			if (type == 0)
-				apobj.ap.receiverecs[i].lastactiveinput = "NoConnect";
             string skipped = string.Join("\t",tofile.Split(new char[] { '\t' }).Skip(2).ToArray());
             SetLastMsg(type, i, j, skipped);
             rawWrite(i, tofile);
@@ -1569,6 +1562,7 @@ namespace PBIStatusReader
     {
         public string name;
         public string snmpipaddress;
+        public string snmppassword = "public"; // пароль (community)
         public string url;
         public string urlinput;
         public string login;
@@ -1664,7 +1658,6 @@ namespace PBIStatusReader
             public string path = "MySettings.xml"; // main conf file
             public uint period;
             public uint periodsnmp;
-            public string snmppassword = "community"; // пароль (community)
             public bool writetofile;
             public bool isdebuglog; // ведение отладочного лога
             public bool checkactiveinputs; // проверять ли активный вход
@@ -1783,7 +1776,7 @@ namespace PBIStatusReader
                 // искать активный вход
                 oldap.ap.checkactiveinputs = ap.checkactiveinputs;
                 // пароль snmp
-                oldap.ap.snmppassword = ap.snmppassword;
+                oldap.ap.receiverecs[i].snmppassword = ap.receiverecs[i].snmppassword;
             }
         }
 
@@ -1795,7 +1788,6 @@ namespace PBIStatusReader
             ap.period = 10;
             ap.periodsnmp = 10;
             ap.checkactiveinputs = true;
-            ap.snmppassword = "community";
             ap.logconnectlimit = 3;
             ap.isTrigger = false;
             ap.triggerCmd = "";
@@ -1877,6 +1869,8 @@ namespace PBIStatusReader
             rr.snmpaddrs[2] = ".1.3.6.1.4.1.38295.44.1.1.1.1.0";
             rr.snmpaddrs[3] = ".1.3.6.1.4.1.38295.44.1.1.1.1.0";
             rr.snmpaddrs[4] = ".1.3.6.1.4.1.38295.44.1.1.1.1.0";
+
+            rr.snmppassword = "public";
 
         }
 
@@ -2041,7 +2035,7 @@ namespace PBIStatusReader
                     formobj.oldap.ap.receiverecs[i].snmpinputsaddrs = turl.Text;
 
                 // snmp password
-                formobj.oldap.ap.snmppassword = tpass.Text;
+                formobj.oldap.ap.receiverecs[i].snmppassword = tpass.Text;
                 
                 // should we look for an active input
                 formobj.oldap.ap.checkactiveinputs = lookForActiveinput.Checked;
@@ -2088,8 +2082,8 @@ namespace PBIStatusReader
             lookForActiveinput.Checked = formobj.oldap.ap.checkactiveinputs;
             // пароль
 
-            if (formobj.oldap.ap.snmppassword.Length > 0)
-                tpass.AppendText(formobj.oldap.ap.snmppassword);
+            if (formobj.oldap.ap.receiverecs[i].snmppassword.Length > 0)
+                tpass.AppendText(formobj.oldap.ap.receiverecs[i].snmppassword);
 
         }
 
