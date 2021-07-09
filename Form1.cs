@@ -344,6 +344,7 @@ namespace PBIStatusReader
             if (isSettingsForm)
                 return;
             Task.Factory.StartNew(() => setValuesSNMP()).ContinueWith(t => getSelectedInputsSNMP());
+            //Task.Factory.StartNew(() => getSelectedInputsSNMP());
         }
 
         void timer1_Tick(object sender, EventArgs e)
@@ -544,7 +545,9 @@ namespace PBIStatusReader
             Console.WriteLine("getSelectedInputSnmp " + i.ToString());
             if (!ap.ap.receiverecs[i].isActive)
                 return;
-            string snmpValue = getValueSNMP(i, ap.ap.receiverecs[i].snmpinputsaddrs);
+            //string snmpValue = "2";
+            ap.ap.receiverecs[i].snmpid = ap.ap.receiverecs[i].snmpid.Select(s => s.Trim()).ToList();
+            string snmpValue = getValueSNMP(i, ap.ap.receiverecs[i].snmpinputsaddrs.Trim()).Trim();
             int snmpIndex = ap.ap.receiverecs[i].snmpid.IndexOf(snmpValue);
             if (snmpIndex == -1)
             {
@@ -688,6 +691,8 @@ namespace PBIStatusReader
             if (isSettingsForm)
                 return;
 			for (int i = 0; i < ap.ap.n; i++) {
+                if (!ap.ap.receiverecs[i].isActive)
+                    continue;
 				for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
 				{
                         dynamicparamls[i, j].Font = new Font(dynamicparamls[i, j].Font, FontStyle.Regular);
@@ -739,6 +744,7 @@ namespace PBIStatusReader
         // snmp mode
         string getValueSNMP(int i, string oid)
         {
+            oid = oid.Trim();
             Console.WriteLine("getValueSNMP " + i.ToString());
             OctetString community = new OctetString(ap.ap.receiverecs[i].snmppassword);
             AgentParameters param = new AgentParameters(community);
@@ -823,7 +829,7 @@ namespace PBIStatusReader
             // считываем по одному параметру в цикле
             for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
             {
-                string param = getValueSNMP(i, ap.ap.receiverecs[i].snmpaddrs[j]).Trim();
+                string param = getValueSNMP(i, ap.ap.receiverecs[i].snmpaddrs[j].Trim()).Trim();
                 //Console.WriteLine("i=" + i.ToString() + " " + "name = " + ap.ap.receiverecs[i].name);
                 //Console.WriteLine("ip = " + ap.ap.receiverecs[i].snmpipaddress);
                 //Console.WriteLine((param == ap.ap.receiverecs[i].matchvalues[j]).ToString());
@@ -836,7 +842,7 @@ namespace PBIStatusReader
                 }
                 int currentstate = 2; // ERROR
 
-                if (param == ap.ap.receiverecs[i].matchvalues[j])
+                if (param == ap.ap.receiverecs[i].matchvalues[j].Trim())
                 {
                     setColorOfPictureBox(pictureBoxes[i, j], 1);
                     // параметр совпадает с ожидаемым
@@ -2003,6 +2009,7 @@ namespace PBIStatusReader
                     // // название проверяемого параметра
                     //Console.WriteLine(reader.ReadToEnd());
                     formobj.oldap.ap.receiverecs[i].parameters = reader.ReadToEnd().Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                    formobj.oldap.ap.receiverecs[i].parameters = formobj.oldap.ap.receiverecs[i].parameters.Select(st => st.Trim()).ToList();
                 }
 
                 // snmp id of parameters
@@ -2010,6 +2017,7 @@ namespace PBIStatusReader
                 {
                     // Номер параметра в SNMP
                     formobj.oldap.ap.receiverecs[i].snmpid = reader2.ReadToEnd().Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                    formobj.oldap.ap.receiverecs[i].snmpid = formobj.oldap.ap.receiverecs[i].snmpid.Select(st => st.Trim()).ToList();
                 }
 
                 // snmp addresses
@@ -2025,17 +2033,18 @@ namespace PBIStatusReader
                 using (System.IO.StringReader reader4 = new System.IO.StringReader(textboxdetailsmatch.Text))
                 {
                     formobj.oldap.ap.receiverecs[i].matchvalues = reader4.ReadToEnd().Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                    formobj.oldap.ap.receiverecs[i].matchvalues = formobj.oldap.ap.receiverecs[i].matchvalues.Select(st => st.Trim()).ToList();
                 }
 
 
                 // save active input address
                 if (type)
-                    formobj.oldap.ap.receiverecs[i].regexpactiveinput = turl.Text;
+                    formobj.oldap.ap.receiverecs[i].regexpactiveinput = turl.Text.Trim();
                 else
-                    formobj.oldap.ap.receiverecs[i].snmpinputsaddrs = turl.Text;
+                    formobj.oldap.ap.receiverecs[i].snmpinputsaddrs = turl.Text.Trim();
 
                 // snmp password
-                formobj.oldap.ap.receiverecs[i].snmppassword = tpass.Text;
+                formobj.oldap.ap.receiverecs[i].snmppassword = tpass.Text.Trim();
                 
                 // should we look for an active input
                 formobj.oldap.ap.checkactiveinputs = lookForActiveinput.Checked;
@@ -2090,6 +2099,7 @@ namespace PBIStatusReader
         public List<string> SplitParamsString(string paramslist)
         {
             List<string> testsplit = paramslist.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+            testsplit = testsplit.Select(s => s.Trim()).ToList();
             if (testsplit.Count == 0)
                 testsplit = paramslist.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
             return testsplit;
@@ -3116,28 +3126,28 @@ namespace PBIStatusReader
         {
             for (int i = 0; i < ap.n; i++)
             {
-                ap.receiverecs[i].name = tnames[i].Text;
+                ap.receiverecs[i].name = tnames[i].Text.Trim();
                 if (ap.receiverecs[i].workmode == "Web")
-                    ap.receiverecs[i].url = turls[i].Text;
+                    ap.receiverecs[i].url = turls[i].Text.Trim();
                 else
-                    ap.receiverecs[i].snmpipaddress = turls[i].Text;
+                    ap.receiverecs[i].snmpipaddress = turls[i].Text.Trim();
                 //ap.receiverecs[i].urlinput = turlset[i].Text;
-                ap.receiverecs[i].workmode = combomode[i].Text;
+                ap.receiverecs[i].workmode = combomode[i].Text.Trim();
                 ap.receiverecs[i].isActive = isActiveChkboxes[i].Checked;
             }
             ap.writetofile = twritetofile.Checked;
             ap.period = Convert.ToUInt32(tperiod.Value);
             ap.periodsnmp = Convert.ToUInt32(tsnmperiod.Value);
             ap.logconnectlimit = Convert.ToInt32(tconnfaillimit.Value);
-            ap.triggerCmd = triggerAction.Text;
+            ap.triggerCmd = triggerAction.Text.Trim();
             ap.isTrigger = triggerCheckBox.Checked;
-            ap.mainlogpath = logmaindir.Text;
+            ap.mainlogpath = logmaindir.Text.Trim();
             ap.nestedpath = tnestedpath.Checked;
             ap.formwidth = Convert.ToUInt32(width.Value);
             ap.previousLocationX = formobj.Location.X;
             ap.previousLocationY = formobj.Location.Y;
             ap.formheight = Convert.ToUInt32(height.Value);
-            ap.debuglogpath = debuglogdir.Text;
+            ap.debuglogpath = debuglogdir.Text.Trim();
             ap.isdebuglog = debuglog.Checked;
         }
 
