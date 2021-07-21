@@ -217,20 +217,23 @@ namespace PBIStatusReader
                     maxwidth = recvnamelabels[i].Width;
             }
 
+            int widthStep = 100;
+
             dynamicparamls = new Label[15, 5];
             for (int j = 0; j < 5; j++)
             {
                 dynamicparamls[0, j] = new Label();
                 dynamicparamls[0, j].Font = new Font("Microsoft Sans Serif", 12);
                 dynamicparamls[0, j].TextAlign = ContentAlignment.TopLeft;
-                dynamicparamls[0, j].Width = 60;
+                dynamicparamls[0, j].Width = widthStep;
             }
             // выстраиваем первый ряд
+            
             dynamicparamls[0, 0].Location = new Point(maxwidth + 50, 9);
-            dynamicparamls[0, 1].Location = new Point(maxwidth + 50 + 66, 9);
-            dynamicparamls[0, 2].Location = new Point(maxwidth + 50 + 66 + 79, 9);
-            dynamicparamls[0, 3].Location = new Point(maxwidth + 50 + 66 + 79 + 82, 9);
-            dynamicparamls[0, 4].Location = new Point(maxwidth + 50 + 66 + 79 + 82 + 88, 9);
+            dynamicparamls[0, 1].Location = new Point(maxwidth + 50 + widthStep, 9);
+            dynamicparamls[0, 2].Location = new Point(maxwidth + 50 + widthStep + 79, 9);
+            dynamicparamls[0, 3].Location = new Point(maxwidth + 50 + widthStep + 79 + 82, 9);
+            dynamicparamls[0, 4].Location = new Point(maxwidth + 50 + widthStep + 79 + 82 + 88, 9);
 
             for (int j = 0; j < ap.ap.receiverecs[0].m; j++)
             {
@@ -296,13 +299,13 @@ namespace PBIStatusReader
                             dynamicparamls[i, j] = new Label();
                             dynamicparamls[i, j].Location = new Point(dynamicparamls[0, j].Location.X, dynamicparamls[0, j].Location.Y + tempstep * i);
                             dynamicparamls[i, j].Font = new Font("Microsoft Sans Serif", 12);
-                            dynamicparamls[i, j].Width = 60;
+                            dynamicparamls[i, j].Width = widthStep;
                             dynamicparamls[i, j].Text = ap.ap.receiverecs[i].parameters[j];
                             this.Controls.Add(dynamicparamls[i, j]);
                         }
                     }
 
-                    firstX += 80;
+                    firstX += 100;
                 }
             }
 
@@ -312,7 +315,8 @@ namespace PBIStatusReader
             timer1.Enabled = true;
             timer2.AutoReset = true;
             timer2.Enabled = true;
-            this.Text += " Загрузка данных...";
+            //if (this.Text.IndexOf("Загрузка данных...") == -1)
+            //    this.Text += " Загрузка данных...";
         }
 
         // полная перерисовка формы (для отображения изменения настроек на форме)
@@ -547,7 +551,7 @@ namespace PBIStatusReader
                 return;
             //string snmpValue = "2";
             ap.ap.receiverecs[i].snmpid = ap.ap.receiverecs[i].snmpid.Select(s => s.Trim()).ToList();
-            string snmpValue = getValueSNMP(i, ap.ap.receiverecs[i].snmpinputsaddrs.Trim()).Trim();
+            string snmpValue = getValueSNMP(i, Regex.Replace(ap.ap.receiverecs[i].snmpinputsaddrs.Trim(), @"\s+", "")).Trim();
             int snmpIndex = ap.ap.receiverecs[i].snmpid.IndexOf(snmpValue);
             if (snmpIndex == -1)
             {
@@ -744,7 +748,7 @@ namespace PBIStatusReader
         // snmp mode
         string getValueSNMP(int i, string oid)
         {
-            oid = oid.Trim();
+            oid = Regex.Replace(oid, @"\s+", "");
             Console.WriteLine("getValueSNMP " + i.ToString());
             OctetString community = new OctetString(ap.ap.receiverecs[i].snmppassword);
             AgentParameters param = new AgentParameters(community);
@@ -829,7 +833,7 @@ namespace PBIStatusReader
             // считываем по одному параметру в цикле
             for (int j = 0; j < ap.ap.receiverecs[i].m; j++)
             {
-                string param = getValueSNMP(i, ap.ap.receiverecs[i].snmpaddrs[j].Trim()).Trim();
+                string param = getValueSNMP(i, Regex.Replace(ap.ap.receiverecs[i].snmpaddrs[j].Trim(), @"\s+", "")).Trim();
                 //Console.WriteLine("i=" + i.ToString() + " " + "name = " + ap.ap.receiverecs[i].name);
                 //Console.WriteLine("ip = " + ap.ap.receiverecs[i].snmpipaddress);
                 //Console.WriteLine((param == ap.ap.receiverecs[i].matchvalues[j]).ToString());
@@ -2039,9 +2043,9 @@ namespace PBIStatusReader
 
                 // save active input address
                 if (type)
-                    formobj.oldap.ap.receiverecs[i].regexpactiveinput = turl.Text.Trim();
+                    formobj.oldap.ap.receiverecs[i].regexpactiveinput = Regex.Replace(turl.Text.Trim(), @"\s+", "");
                 else
-                    formobj.oldap.ap.receiverecs[i].snmpinputsaddrs = turl.Text.Trim();
+                    formobj.oldap.ap.receiverecs[i].snmpinputsaddrs = Regex.Replace(turl.Text.Trim(), @"\s+", "");
 
                 // snmp password
                 formobj.oldap.ap.receiverecs[i].snmppassword = tpass.Text.Trim();
@@ -2099,7 +2103,7 @@ namespace PBIStatusReader
         public List<string> SplitParamsString(string paramslist)
         {
             List<string> testsplit = paramslist.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
-            testsplit = testsplit.Select(s => s.Trim()).ToList();
+            testsplit = testsplit.Select(s => Regex.Replace(s, @"\s+", "")).ToList();
             if (testsplit.Count == 0)
                 testsplit = paramslist.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
             return testsplit;
@@ -3128,9 +3132,9 @@ namespace PBIStatusReader
             {
                 ap.receiverecs[i].name = tnames[i].Text.Trim();
                 if (ap.receiverecs[i].workmode == "Web")
-                    ap.receiverecs[i].url = turls[i].Text.Trim();
+                    ap.receiverecs[i].url = Regex.Replace(turls[i].Text.Trim(), @"\s+", "");
                 else
-                    ap.receiverecs[i].snmpipaddress = turls[i].Text.Trim();
+                    ap.receiverecs[i].snmpipaddress = Regex.Replace(turls[i].Text.Trim(), @"\s+", "");
                 //ap.receiverecs[i].urlinput = turlset[i].Text;
                 ap.receiverecs[i].workmode = combomode[i].Text.Trim();
                 ap.receiverecs[i].isActive = isActiveChkboxes[i].Checked;
